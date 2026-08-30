@@ -34,7 +34,9 @@ export default {
 
     if (url.pathname === '/') {
       const denied = requireDashboardAuth(request, env);
-      return denied ?? dashboard(url, env);
+      if (denied) return denied;
+      if (request.method === 'POST') return saveLimit(request, env);
+      return dashboard(url, env);
     }
 
     return json({ error: 'not found' }, 404);
@@ -131,6 +133,89 @@ function dayOf(timestamp) {
   return DAY.test(iso) ? iso : null;
 }
 
+// -- limits -----------------------------------------------------------------
+
+// Kept in step with lib/quota.py's DEFAULT_LIMITS by hand. These are what the
+// services fall back to, so the dashboard shows them as the live policy until
+// something overrides them.
+const TIERS = [
+  { feature: 'free_import', plan: 'free', max: 50, period: 'month' },
+  { feature: 'free_import', plan: 'pro', max: 6000, period: 'month' },
+  { feature: 'smart_import', plan: 'free', max: 10, period: 'life' },
+  { feature: 'smart_import', plan: 'pro', max: 6000, period: 'month' },
+];
+const PERIODS = ['day', 'month', 'life'];
+
+async function readLimits(env) {
+  const { results } = await env.DB.prepare('SELECT * FROM limits').all();
+  const saved = new Map((results ?? []).map((r) => [`${r.feature_id}:${r.plan}`, r]));
+  return TIERS.map((tier) => {
+    const row = saved.get(`${tier.feature}:${tier.plan}`);
+    return row
+      ? {
+        ...tier,
+        max: row.max_calls,
+        period: row.period,
+        applied: row.applied === 1,
+        updatedAt: row.updated_at,
+        custom: true,
+      }
+      : { ...tier, applied: true, updatedAt: null, custom: false };
+  });
+}
+
+// Enforcement reads Upstash, which both services already call on every
+// request, so a changed limit takes effect without either being redeployed.
+async function pushToUpstash(env, feature, plan, max, period) {
+  if (!env.UPSTASH_URL || !env.UPSTASH_TOKEN) return false;
+  try {
+    const response = await fetch(`${env.UPSTASH_URL}/pipeline`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.UPSTASH_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify([['SET', `limit:${feature}:${plan}`, `${max}:${period}`]]),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function saveLimit(request, env) {
+  // Basic auth is sent automatically by the browser for its realm, so a POST
+  // from another origin would otherwise carry it too. Cheap to refuse.
+  const origin = request.headers.get('origin');
+  if (origin && origin !== new URL(request.url).origin) return json({ error: 'origin' }, 403);
+
+  const form = await request.formData();
+  const feature = String(form.get('feature') ?? '');
+  const plan = String(form.get('plan') ?? '');
+  const period = String(form.get('period') ?? '');
+  const max = Number(form.get('max'));
+
+  const known = TIERS.some((t) => t.feature === feature && t.plan === plan);
+  const valid = known && PERIODS.includes(period)
+    && Number.isInteger(max) && max >= 0 && max <= 1_000_000;
+  if (!valid) return json({ error: 'bad limit' }, 400);
+
+  // Pushed first: the stored row records whether enforcement actually has it,
+  // so the page can never show a limit as live when it is not.
+  const applied = await pushToUpstash(env, feature, plan, max, period);
+  await env.DB.prepare(`
+    INSERT INTO limits (feature_id, plan, max_calls, period, applied, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT (feature_id, plan) DO UPDATE SET
+      max_calls = excluded.max_calls,
+      period = excluded.period,
+      applied = excluded.applied,
+      updated_at = excluded.updated_at
+  `).bind(feature, plan, max, period, applied ? 1 : 0, new Date().toISOString()).run();
+
+  return new Response(null, { status: 303, headers: { Location: '/', ...NO_STORE } });
+}
+
 // -- dashboard --------------------------------------------------------------
 
 const WINDOWS = [
@@ -143,13 +228,14 @@ const WINDOWS = [
 async function dashboard(url, env) {
   const chosen = WINDOWS.find((w) => w.key === url.searchParams.get('w')) ?? WINDOWS[2];
 
-  const [cards, features, people] = await Promise.all([
+  const [cards, features, people, limits] = await Promise.all([
     Promise.all(WINDOWS.map(async (w) => ({ ...w, totals: await totals(env, w.days) }))),
     breakdown(env, chosen.days, 'feature_id'),
     breakdown(env, chosen.days, 'user_hash'),
+    readLimits(env),
   ]);
 
-  return html(page(chosen, cards, features, people));
+  return html(page(chosen, cards, features, people, limits));
 }
 
 function since(days) {
@@ -250,7 +336,30 @@ function rows(list, nameOf) {
   `).join('');
 }
 
-function page(chosen, cards, features, people) {
+const PERIOD_LABEL = { day: 'a day', month: 'a month', life: 'for the life of the install' };
+
+function limitRows(limits) {
+  return limits.map((l) => `
+    <tr>
+      <td class="name">${esc(l.feature)}</td>
+      <td class="name">${esc(l.plan)}</td>
+      <td>
+        <form method="post" class="limit">
+          <input type="hidden" name="feature" value="${esc(l.feature)}">
+          <input type="hidden" name="plan" value="${esc(l.plan)}">
+          <input type="number" name="max" value="${l.max}" min="0" max="1000000" required>
+          <select name="period">
+            ${PERIODS.map((p) => `<option value="${p}"${p === l.period ? ' selected' : ''}>${PERIOD_LABEL[p]}</option>`).join('')}
+          </select>
+          <button type="submit">Save</button>
+        </form>
+      </td>
+      <td class="dim">${l.custom ? (l.applied ? 'set' : '<span class="warn">not applied</span>') : 'default'}</td>
+    </tr>
+  `).join('');
+}
+
+function page(chosen, cards, features, people, limits) {
   const tabs = WINDOWS.map((w) => (
     `<a class="${w.key === chosen.key ? 'on' : ''}" href="?w=${w.key}">${w.label}</a>`
   )).join('');
@@ -290,6 +399,10 @@ function page(chosen, cards, features, people) {
   th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; opacity: .6; font-weight: 600; }
   .name { font-family: ui-monospace, monospace; font-size: 13px; }
   .empty { text-align: center; opacity: .5; padding: 18px; }
+  form.limit { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
+  form.limit input, form.limit select, form.limit button { font: inherit; font-size: 13px; padding: 3px 6px; border: 1px solid rgba(128,128,128,.4); border-radius: 6px; background: transparent; color: inherit; }
+  form.limit input { width: 5.5em; text-align: right; }
+  form.limit button { cursor: pointer; background: rgba(128,128,128,.15); }
   .foot { margin-top: 32px; font-size: 12px; opacity: .55; }
 </style>
 <h1>Ruchi AI spend</h1>
@@ -310,6 +423,17 @@ function page(chosen, cards, features, people) {
 <table>
   <tr><th>Person</th><th>Calls</th><th>Spend</th><th>Errors</th><th>Last seen</th></tr>
   ${rows(people, (r) => `<span title="${esc(r.name)}">${esc(nickname(r.name))}</span>`)}
+</table>
+
+<h3>Limits</h3>
+<p class="dim" style="font-size:13px;margin:0 0 8px">
+  Per feature and per membership, never per person. A saved value reaches both
+  services through Upstash, so it takes effect without an app release or a
+  redeploy. Zero switches a tier off entirely.
+</p>
+<table>
+  <tr><th>Feature</th><th>Plan</th><th>Allowance</th><th>State</th></tr>
+  ${limitRows(limits)}
 </table>
 
 <p class="foot">Times UTC. Spend is what the provider reported; unpriced calls are counted but add nothing to a total.</p>
