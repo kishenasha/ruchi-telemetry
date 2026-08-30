@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { readRecord, sameSecret } from '../src/index.js';
+import { nickname, readRecord, sameSecret } from '../src/index.js';
 
 const valid = () => ({
   request_id: 'abc123',
@@ -94,4 +94,22 @@ test('secret comparison accepts only an exact match, including length', () => {
   assert.ok(!sameSecret('correct-horse', 'correct-horsey'));
   assert.ok(!sameSecret('', 'correct-horse'));
   assert.ok(!sameSecret(undefined, 'correct-horse'));
+});
+
+// The dashboard shows a readable name instead of 64 hex characters. It has to
+// be stable, or the same person reads as a different one on each visit, and it
+// has to stay derived from the hash rather than from anything personal.
+test('a nickname is stable for one hash and different across hashes', () => {
+  const one = 'a'.repeat(64);
+  const two = 'b'.repeat(64);
+  assert.equal(nickname(one), nickname(one));
+  assert.notEqual(nickname(one), nickname(two));
+  assert.match(nickname(one), /^[a-z]+-[a-z]+-\d\d$/);
+});
+
+test('anything that is not a real hash reads as anonymous, never as a name', () => {
+  assert.equal(nickname('anonymous'), 'anonymous');
+  assert.equal(nickname(''), 'anonymous');
+  assert.equal(nickname(null), 'anonymous');
+  assert.equal(nickname('not-a-hash'), 'anonymous');
 });

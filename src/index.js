@@ -205,8 +205,28 @@ function esc(value) {
   ));
 }
 
-function shortHash(value) {
-  return value === NO_IDENTITY ? value : `${String(value).slice(0, 12)}…`;
+// A stable, readable name for a hash nobody can read. The same person is the
+// same name on every visit, which is the whole point: recognisable across
+// visits without the dashboard ever holding anything personal. Derived from
+// the hash itself, so it needs no storage and no new data collection.
+const ADJECTIVES = [
+  'amber', 'brisk', 'calm', 'clever', 'copper', 'crisp', 'dusky', 'eager',
+  'fair', 'gentle', 'glad', 'golden', 'humble', 'jolly', 'keen', 'lively',
+  'lucky', 'merry', 'mellow', 'nimble', 'noble', 'olive', 'plucky', 'quiet',
+  'rapid', 'rustic', 'sage', 'silver', 'sunny', 'swift', 'tidy', 'warm',
+];
+const ANIMALS = [
+  'badger', 'bison', 'crane', 'dingo', 'eagle', 'falcon', 'ferret', 'finch',
+  'gecko', 'heron', 'ibex', 'jackal', 'koala', 'lemur', 'lynx', 'magpie',
+  'marten', 'otter', 'owl', 'panda', 'quail', 'rabbit', 'raven', 'robin',
+  'seal', 'shrew', 'sparrow', 'stoat', 'tapir', 'teal', 'vole', 'wren',
+];
+
+export function nickname(hash) {
+  if (!HEX64.test(hash || '')) return NO_IDENTITY;
+  const pick = (from, at) => from[parseInt(hash.slice(at, at + 4), 16) % from.length];
+  const number = String(parseInt(hash.slice(8, 12), 16) % 100).padStart(2, '0');
+  return `${pick(ADJECTIVES, 0)}-${pick(ANIMALS, 4)}-${number}`;
 }
 
 // Spend is only as complete as the provider's own cost reporting, so a window
@@ -288,8 +308,8 @@ function page(chosen, cards, features, people) {
 
 <h3>By person</h3>
 <table>
-  <tr><th>Pseudonymous id</th><th>Calls</th><th>Spend</th><th>Errors</th><th>Last seen</th></tr>
-  ${rows(people, (r) => `<span title="${esc(r.name)}">${esc(shortHash(r.name))}</span>`)}
+  <tr><th>Person</th><th>Calls</th><th>Spend</th><th>Errors</th><th>Last seen</th></tr>
+  ${rows(people, (r) => `<span title="${esc(r.name)}">${esc(nickname(r.name))}</span>`)}
 </table>
 
 <p class="foot">Times UTC. Spend is what the provider reported; unpriced calls are counted but add nothing to a total.</p>
