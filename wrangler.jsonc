@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ruchi-telemetry",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-30",
+  "observability": { "enabled": true },
+
+  // One address only. Preview URLs would be a second public surface for an
+  // internal dashboard, each needing its own protection to be worth having.
+  "workers_dev": true,
+  "preview_urls": false,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ruchi-telemetry",
+      "database_id": "4515a805-5573-45d8-9c74-ae737280141b"
+    }
+  ]
+}
