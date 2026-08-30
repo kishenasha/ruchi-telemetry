@@ -144,7 +144,7 @@ const TIERS = [
   { feature: 'smart_import', plan: 'free', max: 10, period: 'life' },
   { feature: 'smart_import', plan: 'pro', max: 6000, period: 'month' },
 ];
-const PERIODS = ['day', 'month', 'life'];
+const PERIODS = ['day', 'month', 'year', 'life'];
 
 async function readLimits(env) {
   const { results } = await env.DB.prepare('SELECT * FROM limits').all();
@@ -228,14 +228,15 @@ const WINDOWS = [
 async function dashboard(url, env) {
   const chosen = WINDOWS.find((w) => w.key === url.searchParams.get('w')) ?? WINDOWS[2];
 
-  const [cards, features, people, limits] = await Promise.all([
+  const [cards, features, plans, people, limits] = await Promise.all([
     Promise.all(WINDOWS.map(async (w) => ({ ...w, totals: await totals(env, w.days) }))),
     breakdown(env, chosen.days, 'feature_id'),
-    breakdown(env, chosen.days, 'user_hash'),
+    breakdown(env, chosen.days, 'plan'),
+    peopleBreakdown(env, chosen.days),
     readLimits(env),
   ]);
 
-  return html(page(chosen, cards, features, people, limits));
+  return html(page(chosen, cards, features, plans, people, limits));
 }
 
 function since(days) {
@@ -266,6 +267,27 @@ async function breakdown(env, days, column) {
     MAX(last_seen)                     AS seen
   `;
   const tail = `GROUP BY ${column} ORDER BY micros DESC, calls DESC LIMIT 100`;
+  const statement = days === null
+    ? env.DB.prepare(`SELECT ${columns} FROM usage_daily ${tail}`)
+    : env.DB.prepare(`SELECT ${columns} FROM usage_daily WHERE day >= ? ${tail}`).bind(since(days));
+  const { results } = await statement.all();
+  return results ?? [];
+}
+
+// Grouped by person and tier together rather than by person alone: a cook who
+// upgraded mid-window has spend on both sides of the paywall, and collapsing
+// that would hide the one number the tiers exist to answer.
+async function peopleBreakdown(env, days) {
+  const columns = `
+    user_hash AS name,
+    plan,
+    COALESCE(SUM(request_count), 0)    AS calls,
+    COALESCE(SUM(cost_usd_micros), 0)  AS micros,
+    COALESCE(SUM(cost_known_count), 0) AS priced,
+    COALESCE(SUM(error_count), 0)      AS errors,
+    MAX(last_seen)                     AS seen
+  `;
+  const tail = 'GROUP BY user_hash, plan ORDER BY micros DESC, calls DESC LIMIT 100';
   const statement = days === null
     ? env.DB.prepare(`SELECT ${columns} FROM usage_daily ${tail}`)
     : env.DB.prepare(`SELECT ${columns} FROM usage_daily WHERE day >= ? ${tail}`).bind(since(days));
@@ -323,11 +345,18 @@ function pricedNote(row) {
   return missing > 0 ? `<span class="warn">${count(missing)} unpriced</span>` : '';
 }
 
-function rows(list, nameOf) {
-  if (!list.length) return '<tr><td colspan="5" class="empty">Nothing recorded yet.</td></tr>';
+function planTag(plan) {
+  const known = plan === 'pro' || plan === 'free';
+  return `<span class="tag${plan === 'pro' ? ' tag--pro' : ''}">${esc(known ? plan : plan || 'unknown')}</span>`;
+}
+
+function rows(list, nameOf, { withPlan = false } = {}) {
+  const width = withPlan ? 6 : 5;
+  if (!list.length) return `<tr><td colspan="${width}" class="empty">Nothing recorded yet.</td></tr>`;
   return list.map((row) => `
     <tr>
       <td class="name">${nameOf(row)}</td>
+      ${withPlan ? `<td>${planTag(row.plan)}</td>` : ''}
       <td>${count(row.calls)}</td>
       <td>${money(row.micros)} ${pricedNote(row)}</td>
       <td>${row.errors ? `<span class="warn">${count(row.errors)}</span>` : '0'}</td>
@@ -336,7 +365,9 @@ function rows(list, nameOf) {
   `).join('');
 }
 
-const PERIOD_LABEL = { day: 'a day', month: 'a month', life: 'for the life of the install' };
+const PERIOD_LABEL = {
+  day: 'a day', month: 'a month', year: 'a year', life: 'for the life of the install',
+};
 
 function limitRows(limits) {
   return limits.map((l) => `
@@ -359,7 +390,7 @@ function limitRows(limits) {
   `).join('');
 }
 
-function page(chosen, cards, features, people, limits) {
+function page(chosen, cards, features, plans, people, limits) {
   const tabs = WINDOWS.map((w) => (
     `<a class="${w.key === chosen.key ? 'on' : ''}" href="?w=${w.key}">${w.label}</a>`
   )).join('');
@@ -399,6 +430,8 @@ function page(chosen, cards, features, people, limits) {
   th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; opacity: .6; font-weight: 600; }
   .name { font-family: ui-monospace, monospace; font-size: 13px; }
   .empty { text-align: center; opacity: .5; padding: 18px; }
+  .tag { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding: 1px 7px; border-radius: 999px; border: 1px solid rgba(128,128,128,.35); }
+  .tag--pro { border-color: rgba(202,138,4,.6); color: #b45309; font-weight: 600; }
   form.limit { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
   form.limit input, form.limit select, form.limit button { font: inherit; font-size: 13px; padding: 3px 6px; border: 1px solid rgba(128,128,128,.4); border-radius: 6px; background: transparent; color: inherit; }
   form.limit input { width: 5.5em; text-align: right; }
@@ -419,10 +452,16 @@ function page(chosen, cards, features, people, limits) {
   ${rows(features, (r) => esc(r.name))}
 </table>
 
+<h3>By plan</h3>
+<table>
+  <tr><th>Plan</th><th>Calls</th><th>Spend</th><th>Errors</th><th>Last seen</th></tr>
+  ${rows(plans, (r) => planTag(r.name))}
+</table>
+
 <h3>By person</h3>
 <table>
-  <tr><th>Person</th><th>Calls</th><th>Spend</th><th>Errors</th><th>Last seen</th></tr>
-  ${rows(people, (r) => `<span title="${esc(r.name)}">${esc(nickname(r.name))}</span>`)}
+  <tr><th>Person</th><th>Plan</th><th>Calls</th><th>Spend</th><th>Errors</th><th>Last seen</th></tr>
+  ${rows(people, (r) => `<span title="${esc(r.name)}">${esc(nickname(r.name))}</span>`, { withPlan: true })}
 </table>
 
 <h3>Limits</h3>
