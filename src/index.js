@@ -139,8 +139,10 @@ function dayOf(timestamp) {
 // services fall back to, so the dashboard shows them as the live policy until
 // something overrides them.
 const TIERS = [
-  { feature: 'smart_import', plan: 'free', max: 10, period: 'month' },
+  { feature: 'smart_import', plan: 'free', max: 5, period: 'life' },
   { feature: 'smart_import', plan: 'pro', max: 6000, period: 'month' },
+  { feature: 'quick_import', plan: 'free', max: 10, period: 'month' },
+  { feature: 'quick_import', plan: 'pro', max: 6000, period: 'month' },
   // Settable already so the numbers are agreed before the features land.
   { feature: 'text_import', plan: 'free', max: 5, period: 'life', built: false },
   { feature: 'text_import', plan: 'pro', max: 6000, period: 'month', built: false },
@@ -151,7 +153,8 @@ const TIERS = [
 // The ids are terse and three of the four are some kind of import, so the
 // table says which is which rather than making you remember.
 const FEATURE_LABEL = {
-  smart_import: 'Recipe URL',
+  smart_import: 'Recipe URL, saves itself',
+  quick_import: 'Recipe URL, cook confirms',
   text_import: 'Pasted text',
   image_import: 'Photo',
 };
