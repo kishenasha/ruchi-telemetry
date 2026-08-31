@@ -45,9 +45,16 @@ say "4 calls, 1 unpriced" rather than quietly implying the total is complete.
 | Route | Auth | What it is |
 |---|---|---|
 | `POST /ingest` | `Authorization: Bearer $INGEST_SECRET` | One usage record from `ruchi-ai` |
-| `GET /` | HTTP Basic, any username, password is `$DASHBOARD_PASSWORD` | The dashboard |
+| `GET /` | HTTP Basic, any username, password is `$DASHBOARD_PASSWORD` | Overview: totals against the window before, spend day by day, and the split by import type and membership |
+| `GET /cooks` | same | Every cook, sortable and paged. `?id=<hash>` is one cook on their own |
+| `GET /settings`, `POST /settings` | same | The model and the allowance each membership gets |
 | `GET /health` | none | Liveness only, returns `ok` |
 | `GET /robots.txt` | none | `Disallow: /` |
+
+Three pages rather than one because they are three questions asked at three
+very different rates: the overview daily, a cook only when something looks
+wrong, settings almost never. Everything on the cooks page is sorted, filtered
+and paged in SQL, so the page costs the same at ten thousand cooks as at ten.
 
 Everything except `/health` and `/robots.txt` is `no-store` and
 `X-Robots-Tag: noindex`. Preview URLs are disabled in `wrangler.jsonc`: one
