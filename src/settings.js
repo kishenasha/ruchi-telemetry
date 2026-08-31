@@ -9,25 +9,46 @@
 // Kept in step with lib/quota.py's DEFAULT_LIMITS by hand. These are what the
 // services fall back to, so the dashboard shows them as the live policy until
 // something overrides them.
+//
+// quota.py also carries a quick_import/pro default, deliberately not listed
+// here: a Pro cook is graded straight onto smart_import and never reaches it,
+// so offering it as a setting would be a dial connected to nothing. The
+// server keeps its default as a floor in case that routing ever changes.
 export const TIERS = [
-  { feature: 'smart_import', plan: 'free', max: 5, period: 'life' },
-  { feature: 'smart_import', plan: 'pro', max: 6000, period: 'month' },
-  { feature: 'quick_import', plan: 'free', max: 10, period: 'month' },
-  { feature: 'quick_import', plan: 'pro', max: 6000, period: 'month' },
+  { feature: 'smart_import', plan: 'free', grade: 'trial', max: 5, period: 'life' },
+  { feature: 'quick_import', plan: 'free', grade: 'free', max: 10, period: 'month' },
+  { feature: 'smart_import', plan: 'pro', grade: 'pro', max: 6000, period: 'month' },
   // Settable already so the numbers are agreed before the features land.
-  { feature: 'text_import', plan: 'free', max: 5, period: 'life', built: false },
-  { feature: 'text_import', plan: 'pro', max: 6000, period: 'month', built: false },
-  { feature: 'image_import', plan: 'free', max: 3, period: 'life', built: false },
-  { feature: 'image_import', plan: 'pro', max: 6000, period: 'month', built: false },
+  { feature: 'text_import', plan: 'free', grade: 'free', max: 5, period: 'life', built: false },
+  { feature: 'text_import', plan: 'pro', grade: 'pro', max: 6000, period: 'month', built: false },
+  { feature: 'image_import', plan: 'free', grade: 'free', max: 3, period: 'life', built: false },
+  { feature: 'image_import', plan: 'pro', grade: 'pro', max: 6000, period: 'month', built: false },
 ];
 
-// The ids are terse and every one of them is some kind of import, so the page
-// says which is which rather than making you remember.
+// Two ways to name the same four ids, because two pages ask different things
+// of them. A usage breakdown cares which model ran, so it separates the two
+// grades of URL import; the settings page cares what the cook was reaching
+// for, and both grades of URL import are one button to them.
 export const FEATURE_LABEL = {
   smart_import: 'Recipe URL, saves itself',
   quick_import: 'Recipe URL, cook confirms',
   text_import: 'Pasted text',
   image_import: 'Photo',
+};
+
+export const SOURCE_LABEL = {
+  smart_import: 'Recipe URL',
+  quick_import: 'Recipe URL',
+  text_import: 'Pasted text',
+  image_import: 'Photo',
+};
+
+export const GRADE_LABEL = { trial: 'Pro trial', free: 'Free', pro: 'Pro' };
+
+export const GRADE_NOTE = {
+  trial: 'A free cook on the good model, saving without the editor',
+  free: 'A free cook on the cheap model, confirming before it saves',
+  pro: 'What Pro buys, and a ceiling no real cook reaches',
 };
 
 // Kept in step with server/lib/models.py's DEFAULT_MODELS by hand.

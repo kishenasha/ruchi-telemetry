@@ -55,6 +55,12 @@ export function nickname(hash) {
   return `${pick(ADJECTIVES, 0)}-${pick(ANIMALS, 4)}-${number}`;
 }
 
+const GRADE_CLASS = { pro: ' tag--pro', trial: ' tag--trial' };
+
+export function gradeTag(grade, label) {
+  return `<span class="tag${GRADE_CLASS[grade] ?? ''}">${esc(label)}</span>`;
+}
+
 export function planTag(plan) {
   const label = plan === 'pro' ? 'Pro' : plan === 'free' ? 'Free' : (plan || 'unknown');
   return `<span class="tag${plan === 'pro' ? ' tag--pro' : ''}">${esc(label)}</span>`;
@@ -86,6 +92,14 @@ export const WINDOWS = [
   { key: 'month', label: '30 days', days: 30 },
   { key: 'all', label: 'All time', days: null },
 ];
+
+/** The days a window covers, spelled out. Four windows agreeing looks like a
+ * broken switch until you can see they cover the same day. */
+export function rangeLabel(chosen) {
+  if (chosen.days === null) return 'Everything so far';
+  const day = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+  return chosen.days === 1 ? day(0) : `${day(chosen.days - 1)} to ${day(0)}`;
+}
 
 export function windowFrom(url) {
   return WINDOWS.find((w) => w.key === url.searchParams.get('w')) ?? WINDOWS[2];
@@ -158,7 +172,7 @@ export function panel(title, note, body) {
   const head = title
     ? `<div class="panel-head"><h3>${esc(title)}</h3>${note ? `<p>${esc(note)}</p>` : ''}</div>`
     : '';
-  return `<section class="panel">${head}${body}</section>`;
+  return `<section class="panel">${head}<div class="scroll">${body}</div></section>`;
 }
 
 export function empty(text, span) {
@@ -182,10 +196,27 @@ export function shell(here, body) {
 <meta name="robots" content="noindex,nofollow">
 <title>Ruchi</title>
 <style>${STYLE}</style>
+<script>
+  try {
+    var saved = localStorage.getItem('theme');
+    if (saved) document.documentElement.dataset.theme = saved;
+  } catch (e) {}
+  function flipTheme() {
+    var root = document.documentElement;
+    var dark = root.dataset.theme
+      ? root.dataset.theme === 'dark'
+      : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+    try { localStorage.setItem('theme', root.dataset.theme); } catch (e) {}
+  }
+</script>
 <header class="top">
   <div class="wrap top-in">
     <a class="brand" href="/">Ruchi</a>
     <nav class="tabs">${links}</nav>
+    <button class="theme" onclick="flipTheme()" title="Light or dark" aria-label="Switch between light and dark">
+      <span class="sun">&#9788;</span><span class="moon">&#9790;</span>
+    </button>
   </div>
 </header>
 <main class="wrap">${body}</main>
@@ -196,19 +227,24 @@ export function shell(here, body) {
 `;
 }
 
+const DARK = `
+    --bg: #121210; --panel: #1B1B18; --ink: #EFEDE6; --muted: #9B968C;
+    --line: #2C2C26; --green: #A8C4AE; --deep: #C9DCCE; --wash: #232C26;
+    --warn: #E0A07C; --shadow: none;
+    --sun: inline; --moon: none;
+`;
+
 const STYLE = `
   :root {
     --bg: #FAF9F7; --panel: #FFFFFF; --ink: #241A16; --muted: #6E6A63;
     --line: #E8E5DE; --green: #47624F; --deep: #34483A; --wash: #EDF0EA;
     --warn: #A3502F; --shadow: 0 1px 2px rgba(30,20,10,.04), 0 10px 28px rgba(30,20,10,.045);
+    /* Which half of the theme button is showing. Swapped by the dark palette,
+       so the button needs no rule of its own per state. */
+    --sun: none; --moon: inline;
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #121210; --panel: #1B1B18; --ink: #EFEDE6; --muted: #9B968C;
-      --line: #2C2C26; --green: #A8C4AE; --deep: #C9DCCE; --wash: #232C26;
-      --warn: #E0A07C; --shadow: none;
-    }
-  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { ${DARK} } }
+  :root[data-theme="dark"] { ${DARK} }
   * { box-sizing: border-box; }
   body {
     font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -216,7 +252,7 @@ const STYLE = `
     -webkit-font-smoothing: antialiased;
   }
   a { color: inherit; }
-  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 0 24px; }
 
   .top { border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 5; }
   .top-in { display: flex; align-items: center; gap: 26px; height: 56px; }
@@ -228,6 +264,13 @@ const STYLE = `
   }
   .tabs a:hover { background: var(--wash); color: var(--ink); }
   .tabs a.on { background: var(--wash); color: var(--deep); }
+  .theme {
+    margin-left: auto; padding: 5px 10px; font-size: 15px; line-height: 1;
+    background: transparent; color: var(--muted); border-color: transparent;
+  }
+  .theme:hover { background: var(--wash); color: var(--ink); }
+  .theme .sun { display: var(--sun); }
+  .theme .moon { display: var(--moon); }
 
   main { padding: 26px 20px 8px; }
   .head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
@@ -283,13 +326,16 @@ const STYLE = `
   .split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
   .split .panel + .panel { margin-top: 0; }
 
-  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  /* A table that outgrows the card scrolls inside it, rather than the page
+     scrolling sideways or the columns crushing into each other. */
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; min-width: 520px; }
   th, td { text-align: left; padding: 10px 17px; border-top: 1px solid var(--line); }
   thead th {
     border-top: 0; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em;
     color: var(--muted); font-weight: 700; padding-top: 14px; padding-bottom: 8px;
   }
-  .panel-head + table thead th { border-top: 1px solid var(--line); }
+  .panel-head + .scroll thead th { border-top: 1px solid var(--line); }
   thead th a { color: inherit; text-decoration: none; }
   thead th a:hover { color: var(--ink); }
   thead th a.on { color: var(--deep); }
@@ -302,6 +348,10 @@ const STYLE = `
 
   .tag { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; padding: 2px 9px; border-radius: 999px; background: var(--wash); color: var(--deep); }
   .tag--pro { background: var(--green); color: var(--panel); }
+  .tag--trial { background: transparent; color: var(--green); box-shadow: inset 0 0 0 1px var(--green); }
+  .grade-note { display: block; font-size: 12px; margin-top: 3px; }
+  .range { color: var(--muted); }
+  .range::before { content: '·'; margin: 0 6px; }
   .soon { font-size: 11.5px; color: var(--muted); font-style: italic; margin-left: 6px; }
 
   .filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
@@ -313,8 +363,8 @@ const STYLE = `
   button { cursor: pointer; background: var(--green); color: var(--panel); border-color: var(--green); font-weight: 600; padding: 6px 14px; }
   button:hover { opacity: .9; }
   form.set { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-  form.set input[type=number] { width: 5.5em; text-align: right; }
-  form.set input.wide { width: 16em; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12.5px; }
+  form.set input[type=number] { width: 7em; text-align: right; }
+  form.set input.wide { width: 22em; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12.5px; }
 
   .pager { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; font-size: 13px; color: var(--muted); }
   .pager a { text-decoration: none; font-weight: 600; color: var(--deep); padding: 5px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }

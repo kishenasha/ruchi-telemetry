@@ -7,11 +7,12 @@
 
 import * as db from './queries.js';
 import {
-  chart, count, empty, esc, failures, money, nickname, panel, planTag,
-  pricedNote, shell, stat, state, when, windowFrom, windowPicker,
+  chart, count, empty, esc, failures, gradeTag, money, nickname, panel, planTag,
+  pricedNote, rangeLabel, shell, stat, state, when, windowFrom, windowPicker,
 } from './page.js';
 import {
-  FEATURE_LABEL, PERIODS, PERIOD_LABEL, readLimits, readModels,
+  FEATURE_LABEL, GRADE_LABEL, GRADE_NOTE, PERIODS, PERIOD_LABEL, SOURCE_LABEL,
+  readLimits, readModels,
 } from './settings.js';
 
 const PER_PAGE = 50;
@@ -20,9 +21,10 @@ function featureName(id) {
   return `<strong>${esc(FEATURE_LABEL[id] ?? id)}</strong>`;
 }
 
-function head(title, lede, right = '') {
+function head(title, lede, chosen = null, right = '') {
+  const range = chosen ? ` <span class="range">${esc(rangeLabel(chosen))}</span>` : '';
   return `<div class="head">
-    <div><h1>${esc(title)}</h1><p class="lede">${esc(lede)}</p></div>
+    <div><h1>${esc(title)}</h1><p class="lede">${esc(lede)}${range}</p></div>
     ${right}
   </div>`;
 }
@@ -70,7 +72,7 @@ export async function overview(url, env) {
   ].join('');
 
   const body = `
-${head('Overview', 'What imports are costing.', windowPicker(url, chosen))}
+${head('Overview', 'What imports are costing.', chosen, windowPicker(url, chosen))}
 <div class="stats">${stats}</div>
 ${projection}
 
@@ -164,7 +166,7 @@ export async function cooks(url, env) {
     </form>`;
 
   const body = `
-${head('Cooks', 'One row per person per membership. A cook who upgraded shows on both sides.', windowPicker(url, chosen))}
+${head('Cooks', 'One row per person per membership. A cook who upgraded shows on both sides.', chosen, windowPicker(url, chosen))}
 ${filters}
 ${panel('', '', `<table>
   <thead><tr>
@@ -215,7 +217,7 @@ export async function oneCook(url, env, hash) {
 
   const body = `
 <p><a class="back" href="/cooks?w=${esc(chosen.key)}">&larr; All cooks</a></p>
-${head(nickname(hash), 'One cook, by import type and by day.', windowPicker(url, chosen))}
+${head(nickname(hash), 'One cook, by import type and by day.', chosen, windowPicker(url, chosen))}
 <div class="stats">${stats}</div>
 
 <h2>What they imported</h2>
@@ -273,8 +275,8 @@ export async function settings(env, failure = null) {
 
   const limitRows = limits.map((l) => `
     <tr>
-      <td>${featureName(l.feature)}${l.built === false ? ' <span class="soon">not built yet</span>' : ''}</td>
-      <td>${planTag(l.plan)}</td>
+      <td><strong>${esc(SOURCE_LABEL[l.feature] ?? l.feature)}</strong>${l.built === false ? ' <span class="soon">not built yet</span>' : ''}</td>
+      <td>${gradeTag(l.grade, GRADE_LABEL[l.grade])}<span class="lede grade-note">${esc(GRADE_NOTE[l.grade])}</span></td>
       <td>
         <form method="post" class="set">
           <input type="hidden" name="feature" value="${esc(l.feature)}">
@@ -298,8 +300,8 @@ ${panel('Which model each membership uses', 'This is the whole difference betwee
   <tbody>${modelRows}</tbody>
 </table>`)}
 
-${panel('How many imports each membership gets', 'Per import type and membership, never per person. Zero turns that combination off.', `<table>
-  <thead><tr><th>Import type</th><th>Membership</th><th>Allowance</th><th>State</th></tr></thead>
+${panel('How many imports each grade gets', 'Per grade, never per person. Zero turns that combination off.', `<table>
+  <thead><tr><th>Import</th><th>Grade</th><th>Allowance</th><th>State</th></tr></thead>
   <tbody>${limitRows}</tbody>
 </table>`)}
 `;
