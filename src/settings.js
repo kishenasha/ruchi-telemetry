@@ -50,10 +50,21 @@ export const GRADE_NOTE = {
   pro: 'What Pro buys, and a ceiling no real cook reaches',
 };
 
-// Kept in step with server/lib/models.py's DEFAULT_MODELS by hand.
+// Kept in step with server/lib/models.py's DEFAULT_MODELS by hand. Keyed by
+// feature as well as plan: a photograph and a pasted paragraph are not the
+// same job as a scraped page, and each needs re-pointing on its own without
+// dragging the others with it.
+//
+// smart_import is the same model on both rows on purpose. A free cook's
+// trial is a real taste of Pro or it demonstrates nothing.
 export const MODELS = [
-  { plan: 'free', model: 'google/gemini-2.5-flash-lite' },
-  { plan: 'pro', model: 'openai/gpt-5.6-luna' },
+  { feature: 'smart_import', plan: 'free', grade: 'trial', model: 'openai/gpt-5.6-luna' },
+  { feature: 'quick_import', plan: 'free', grade: 'free', model: 'google/gemini-2.5-flash-lite' },
+  { feature: 'smart_import', plan: 'pro', grade: 'pro', model: 'openai/gpt-5.6-luna' },
+  { feature: 'text_import', plan: 'free', grade: 'free', model: 'google/gemini-2.5-flash-lite', built: false },
+  { feature: 'text_import', plan: 'pro', grade: 'pro', model: 'openai/gpt-5.6-luna', built: false },
+  { feature: 'image_import', plan: 'free', grade: 'free', model: 'google/gemini-2.5-flash-lite', built: false },
+  { feature: 'image_import', plan: 'pro', grade: 'pro', model: 'openai/gpt-5.6-luna', built: false },
 ];
 
 // Same rule server side. A value that fails it is refused here rather than
@@ -68,9 +79,9 @@ export const PERIOD_LABEL = {
 
 export async function readModels(env) {
   const { results } = await env.DB.prepare('SELECT * FROM models').all();
-  const saved = new Map((results ?? []).map((r) => [r.plan, r]));
+  const saved = new Map((results ?? []).map((r) => [`${r.feature_id}:${r.plan}`, r]));
   return MODELS.map((tier) => {
-    const row = saved.get(tier.plan);
+    const row = saved.get(`${tier.feature}:${tier.plan}`);
     return row
       ? { ...tier, model: row.model, applied: row.applied === 1, updatedAt: row.updated_at, custom: true }
       : { ...tier, applied: true, updatedAt: null, custom: false };
@@ -113,18 +124,19 @@ async function push(env, key, value) {
 }
 
 async function saveModel(env, form) {
+  const feature = String(form.get('feature') ?? '');
   const plan = String(form.get('plan') ?? '');
   const model = String(form.get('model') ?? '').trim();
-  if (!MODELS.some((m) => m.plan === plan)) return 'unknown plan';
+  if (!MODELS.some((m) => m.feature === feature && m.plan === plan)) return 'unknown model row';
   if (!MODEL_ID.test(model)) return 'not a model id';
 
-  const applied = await push(env, `model:${plan}`, model);
+  const applied = await push(env, `model:${feature}:${plan}`, model);
   await env.DB.prepare(`
-    INSERT INTO models (plan, model, applied, updated_at)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT (plan) DO UPDATE SET
+    INSERT INTO models (feature_id, plan, model, applied, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT (feature_id, plan) DO UPDATE SET
       model = excluded.model, applied = excluded.applied, updated_at = excluded.updated_at
-  `).bind(plan, model, applied ? 1 : 0, new Date().toISOString()).run();
+  `).bind(feature, plan, model, applied ? 1 : 0, new Date().toISOString()).run();
   return null;
 }
 

@@ -309,15 +309,14 @@ export async function settings(env, failure = null) {
 
   const modelRows = models.map((m) => `
     <tr>
-      <td>${planTag(m.plan)}</td>
-      <td class="dim">${m.plan === 'pro'
-    ? 'Reconstructs the recipe and saves it, no editor'
-    : 'Tidies the recipe, then the cook confirms it'}</td>
+      <td><strong>${esc(SOURCE_LABEL[m.feature] ?? m.feature)}</strong>${m.built === false ? ' <span class="soon">not built yet</span>' : ''}</td>
+      <td>${gradeTag(m.grade, GRADE_LABEL[m.grade])}</td>
       <td>
         <form method="post" class="set">
+          <input type="hidden" name="feature" value="${esc(m.feature)}">
           <input type="hidden" name="plan" value="${esc(m.plan)}">
           <input type="text" name="model" value="${esc(m.model)}" class="wide"
-                 pattern="[a-z0-9][a-z0-9._\\-]*/[a-z0-9][a-z0-9._:\\-]*" required>
+                 pattern="[a-z0-9][a-z0-9._\-]*/[a-z0-9][a-z0-9._:\-]*" required>
           <button type="submit">Save</button>
           ${state(m)}
         </form>
@@ -346,8 +345,8 @@ export async function settings(env, failure = null) {
 ${head('Settings', 'Changes reach the servers within seconds. No app release, no redeploy.')}
 ${failure ? `<p class="warn">That change was refused: ${esc(failure)}.</p>` : ''}
 
-${panel('Which model each membership uses', 'This is the whole difference between Free and Pro.', `<table>
-  <thead><tr><th>Membership</th><th>What it does</th><th>Model</th></tr></thead>
+${panel('Which model each import runs on', 'A trial import runs the model Pro pays for, which is what makes it a taste of it.', `<table>
+  <thead><tr><th>Import</th><th>Grade</th><th>Model</th></tr></thead>
   <tbody>${modelRows}</tbody>
 </table>`)}
 
