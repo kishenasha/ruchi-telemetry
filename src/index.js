@@ -35,7 +35,7 @@ export default {
     if (url.pathname === '/') {
       const denied = requireDashboardAuth(request, env);
       if (denied) return denied;
-      if (request.method === 'POST') return saveLimit(request, env);
+      if (request.method === 'POST') return saveSetting(request, env);
       return dashboard(url, env);
     }
 
@@ -139,11 +139,84 @@ function dayOf(timestamp) {
 // services fall back to, so the dashboard shows them as the live policy until
 // something overrides them.
 const TIERS = [
-  { feature: 'free_import', plan: 'free', max: 50, period: 'month' },
-  { feature: 'free_import', plan: 'pro', max: 6000, period: 'month' },
-  { feature: 'smart_import', plan: 'free', max: 10, period: 'life' },
+  { feature: 'smart_import', plan: 'free', max: 10, period: 'month' },
   { feature: 'smart_import', plan: 'pro', max: 6000, period: 'month' },
+  { feature: 'text_import', plan: 'free', max: 5, period: 'life' },
+  { feature: 'text_import', plan: 'pro', max: 6000, period: 'month' },
+  { feature: 'image_import', plan: 'free', max: 3, period: 'life' },
+  { feature: 'image_import', plan: 'pro', max: 6000, period: 'month' },
 ];
+
+// The ids are terse and three of the four are some kind of import, so the
+// table says which is which rather than making you remember.
+const FEATURE_LABEL = {
+  smart_import: 'Recipe URL',
+  text_import: 'Pasted text',
+  image_import: 'Photo',
+};
+
+// Which model each plan's imports run on. The whole difference between the
+// tiers: a free import is tidied by the cheap one and opens in the editor to
+// confirm, a Pro import is reconstructed by the good one and saves itself.
+// Kept in step with server/lib/models.py's DEFAULT_MODELS by hand.
+const MODELS = [
+  { plan: 'free', model: 'google/gemini-2.5-flash-lite' },
+  { plan: 'pro', model: 'openai/gpt-5.6-luna' },
+];
+
+// Same rule server side. A value that fails it is refused here rather than
+// saved and silently ignored by the services.
+export const MODEL_ID = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/;
+
+async function readModels(env) {
+  const { results } = await env.DB.prepare('SELECT * FROM models').all();
+  const saved = new Map((results ?? []).map((r) => [r.plan, r]));
+  return MODELS.map((tier) => {
+    const row = saved.get(tier.plan);
+    return row
+      ? {
+        ...tier,
+        model: row.model,
+        applied: row.applied === 1,
+        updatedAt: row.updated_at,
+        custom: true,
+      }
+      : { ...tier, applied: true, updatedAt: null, custom: false };
+  });
+}
+
+async function saveModel(env, form) {
+  const plan = String(form.get('plan') ?? '');
+  const model = String(form.get('model') ?? '').trim();
+  if (!MODELS.some((m) => m.plan === plan)) return 'unknown plan';
+  if (!MODEL_ID.test(model)) return 'not a model id';
+
+  const applied = await pushModelToUpstash(env, plan, model);
+  await env.DB.prepare(`
+    INSERT INTO models (plan, model, applied, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT (plan) DO UPDATE SET
+      model = excluded.model, applied = excluded.applied, updated_at = excluded.updated_at
+  `).bind(plan, model, applied ? 1 : 0, new Date().toISOString()).run();
+  return null;
+}
+
+async function pushModelToUpstash(env, plan, model) {
+  if (!env.UPSTASH_URL || !env.UPSTASH_TOKEN) return false;
+  try {
+    const response = await fetch(`${env.UPSTASH_URL}/pipeline`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.UPSTASH_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify([['SET', `model:${plan}`, model]]),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
 const PERIODS = ['day', 'month', 'year', 'life'];
 
 async function readLimits(env) {
@@ -183,13 +256,22 @@ async function pushToUpstash(env, feature, plan, max, period) {
   }
 }
 
-async function saveLimit(request, env) {
+async function saveSetting(request, env) {
   // Basic auth is sent automatically by the browser for its realm, so a POST
   // from another origin would otherwise carry it too. Cheap to refuse.
   const origin = request.headers.get('origin');
   if (origin && origin !== new URL(request.url).origin) return json({ error: 'origin' }, 403);
 
   const form = await request.formData();
+
+  // Two settings share this endpoint because they share the shape: validate,
+  // push to Upstash, record whether it landed.
+  if (form.get('model') !== null) {
+    const failure = await saveModel(env, form);
+    if (failure) return json({ error: failure }, 400);
+    return Response.redirect(new URL(request.url).origin + '/', 303);
+  }
+
   const feature = String(form.get('feature') ?? '');
   const plan = String(form.get('plan') ?? '');
   const period = String(form.get('period') ?? '');
@@ -228,15 +310,16 @@ const WINDOWS = [
 async function dashboard(url, env) {
   const chosen = WINDOWS.find((w) => w.key === url.searchParams.get('w')) ?? WINDOWS[2];
 
-  const [cards, features, plans, people, limits] = await Promise.all([
+  const [cards, features, plans, people, limits, models] = await Promise.all([
     Promise.all(WINDOWS.map(async (w) => ({ ...w, totals: await totals(env, w.days) }))),
     breakdown(env, chosen.days, 'feature_id'),
     breakdown(env, chosen.days, 'plan'),
     peopleBreakdown(env, chosen.days),
     readLimits(env),
+    readModels(env),
   ]);
 
-  return html(page(chosen, cards, features, plans, people, limits));
+  return html(page(chosen, cards, features, plans, people, limits, models));
 }
 
 function since(days) {
@@ -369,10 +452,27 @@ const PERIOD_LABEL = {
   day: 'a day', month: 'a month', year: 'a year', life: 'for the life of the install',
 };
 
+function modelRows(models) {
+  return models.map((m) => `
+    <tr>
+      <td class="name">${esc(m.plan)}</td>
+      <td>
+        <form method="post" class="limit">
+          <input type="hidden" name="plan" value="${esc(m.plan)}">
+          <input type="text" name="model" value="${esc(m.model)}" size="34"
+                 pattern="[a-z0-9][a-z0-9._\-]*/[a-z0-9][a-z0-9._:\-]*" required>
+          <button type="submit">Save</button>
+        </form>
+      </td>
+      <td class="dim">${m.custom ? (m.applied ? 'set' : '<span class="warn">not applied</span>') : 'default'}</td>
+    </tr>
+  `).join('');
+}
+
 function limitRows(limits) {
   return limits.map((l) => `
     <tr>
-      <td class="name">${esc(l.feature)}</td>
+      <td class="name">${esc(l.feature)}<span class="dim"> ${esc(FEATURE_LABEL[l.feature] ?? '')}</span></td>
       <td class="name">${esc(l.plan)}</td>
       <td>
         <form method="post" class="limit">
@@ -390,7 +490,7 @@ function limitRows(limits) {
   `).join('');
 }
 
-function page(chosen, cards, features, plans, people, limits) {
+function page(chosen, cards, features, plans, people, limits, models) {
   const tabs = WINDOWS.map((w) => (
     `<a class="${w.key === chosen.key ? 'on' : ''}" href="?w=${w.key}">${w.label}</a>`
   )).join('');
@@ -449,7 +549,7 @@ function page(chosen, cards, features, plans, people, limits) {
 <h3>By feature</h3>
 <table>
   <tr><th>Feature</th><th>Calls</th><th>Spend</th><th>Errors</th><th>Last seen</th></tr>
-  ${rows(features, (r) => esc(r.name))}
+  ${rows(features, (r) => `${esc(r.name)}<span class="dim"> ${esc(FEATURE_LABEL[r.name] ?? '')}</span>`)}
 </table>
 
 <h3>By plan</h3>
@@ -462,6 +562,19 @@ function page(chosen, cards, features, plans, people, limits) {
 <table>
   <tr><th>Person</th><th>Plan</th><th>Calls</th><th>Spend</th><th>Errors</th><th>Last seen</th></tr>
   ${rows(people, (r) => `<span title="${esc(r.name)}">${esc(nickname(r.name))}</span>`, { withPlan: true })}
+</table>
+
+<h3>Models</h3>
+<p class="dim" style="font-size:13px;margin:0 0 8px">
+  The whole difference between the tiers. A free import is tidied by the cheap
+  model and opens in the recipe editor to confirm; a Pro import is
+  reconstructed by the good one and saves itself. Takes effect without an app
+  release or a redeploy. A value that is not a model id is refused, and a model
+  that cannot be pushed shows as not applied rather than as live.
+</p>
+<table>
+  <tr><th>Plan</th><th>Model</th><th>State</th></tr>
+  ${modelRows(models)}
 </table>
 
 <h3>Limits</h3>
