@@ -141,10 +141,11 @@ function dayOf(timestamp) {
 const TIERS = [
   { feature: 'smart_import', plan: 'free', max: 10, period: 'month' },
   { feature: 'smart_import', plan: 'pro', max: 6000, period: 'month' },
-  { feature: 'text_import', plan: 'free', max: 5, period: 'life' },
-  { feature: 'text_import', plan: 'pro', max: 6000, period: 'month' },
-  { feature: 'image_import', plan: 'free', max: 3, period: 'life' },
-  { feature: 'image_import', plan: 'pro', max: 6000, period: 'month' },
+  // Settable already so the numbers are agreed before the features land.
+  { feature: 'text_import', plan: 'free', max: 5, period: 'life', built: false },
+  { feature: 'text_import', plan: 'pro', max: 6000, period: 'month', built: false },
+  { feature: 'image_import', plan: 'free', max: 3, period: 'life', built: false },
+  { feature: 'image_import', plan: 'pro', max: 6000, period: 'month', built: false },
 ];
 
 // The ids are terse and three of the four are some kind of import, so the
@@ -425,27 +426,38 @@ export function nickname(hash) {
 // total is the whole story.
 function pricedNote(row) {
   const missing = (row.calls || 0) - (row.priced || 0);
-  return missing > 0 ? `<span class="warn">${count(missing)} unpriced</span>` : '';
+  return missing > 0 ? ` <span class="warn note">${count(missing)} unpriced</span>` : '';
 }
 
 function planTag(plan) {
-  const known = plan === 'pro' || plan === 'free';
-  return `<span class="tag${plan === 'pro' ? ' tag--pro' : ''}">${esc(known ? plan : plan || 'unknown')}</span>`;
+  const label = plan === 'pro' ? 'Pro' : plan === 'free' ? 'Free' : (plan || 'unknown');
+  return `<span class="tag${plan === 'pro' ? ' tag--pro' : ''}">${esc(label)}</span>`;
 }
 
-function rows(list, nameOf, { withPlan = false } = {}) {
+// The id is what the services use; nobody reading this needs to see it.
+function featureName(id) {
+  return `<strong>${esc(FEATURE_LABEL[id] ?? id)}</strong>`;
+}
+
+function rows(list, nameOf, { withPlan = false, empty = 'Nothing yet.' } = {}) {
   const width = withPlan ? 6 : 5;
-  if (!list.length) return `<tr><td colspan="${width}" class="empty">Nothing recorded yet.</td></tr>`;
+  if (!list.length) return `<tr><td colspan="${width}" class="empty">${esc(empty)}</td></tr>`;
   return list.map((row) => `
     <tr>
-      <td class="name">${nameOf(row)}</td>
+      <td>${nameOf(row)}</td>
       ${withPlan ? `<td>${planTag(row.plan)}</td>` : ''}
-      <td>${count(row.calls)}</td>
-      <td>${money(row.micros)} ${pricedNote(row)}</td>
-      <td>${row.errors ? `<span class="warn">${count(row.errors)}</span>` : '0'}</td>
-      <td class="dim">${esc((row.seen || '').slice(0, 16).replace('T', ' '))}</td>
+      <td class="num">${count(row.calls)}</td>
+      <td class="num">${money(row.micros)}${pricedNote(row)}</td>
+      <td class="num">${failures(row)}</td>
+      <td class="dim when">${esc((row.seen || '').slice(0, 16).replace('T', ' '))}</td>
     </tr>
   `).join('');
+}
+
+// A bare red digit says nothing about how bad it is. Out of how many does.
+function failures(row) {
+  if (!row.errors) return '<span class="ok-dot">none</span>';
+  return `<span class="warn">${count(row.errors)} of ${count(row.calls)}</span>`;
 }
 
 const PERIOD_LABEL = {
@@ -455,27 +467,38 @@ const PERIOD_LABEL = {
 function modelRows(models) {
   return models.map((m) => `
     <tr>
-      <td class="name">${esc(m.plan)}</td>
+      <td>${planTag(m.plan)}</td>
+      <td class="dim">${m.plan === 'pro'
+        ? 'Reconstructs the recipe and saves it, no editor'
+        : 'Tidies the recipe, then the cook confirms it'}</td>
       <td>
-        <form method="post" class="limit">
+        <form method="post" class="set">
           <input type="hidden" name="plan" value="${esc(m.plan)}">
-          <input type="text" name="model" value="${esc(m.model)}" size="34"
+          <input type="text" name="model" value="${esc(m.model)}" class="wide"
                  pattern="[a-z0-9][a-z0-9._\-]*/[a-z0-9][a-z0-9._:\-]*" required>
           <button type="submit">Save</button>
         </form>
       </td>
-      <td class="dim">${m.custom ? (m.applied ? 'set' : '<span class="warn">not applied</span>') : 'default'}</td>
+      <td>${state(m)}</td>
     </tr>
   `).join('');
+}
+
+// Whether what is shown is actually what the services are enforcing.
+function state(row) {
+  if (!row.custom) return '<span class="dim">shipped default</span>';
+  return row.applied
+    ? '<span class="ok-dot">live</span>'
+    : '<span class="warn">not applied</span>';
 }
 
 function limitRows(limits) {
   return limits.map((l) => `
     <tr>
-      <td class="name">${esc(l.feature)}<span class="dim"> ${esc(FEATURE_LABEL[l.feature] ?? '')}</span></td>
-      <td class="name">${esc(l.plan)}</td>
+      <td>${featureName(l.feature)}${l.built === false ? ' <span class="soon">not built yet</span>' : ''}</td>
+      <td>${planTag(l.plan)}</td>
       <td>
-        <form method="post" class="limit">
+        <form method="post" class="set">
           <input type="hidden" name="feature" value="${esc(l.feature)}">
           <input type="hidden" name="plan" value="${esc(l.plan)}">
           <input type="number" name="max" value="${l.max}" min="0" max="1000000" required>
@@ -485,110 +508,194 @@ function limitRows(limits) {
           <button type="submit">Save</button>
         </form>
       </td>
-      <td class="dim">${l.custom ? (l.applied ? 'set' : '<span class="warn">not applied</span>') : 'default'}</td>
+      <td>${state(l)}</td>
     </tr>
   `).join('');
 }
 
 function page(chosen, cards, features, plans, people, limits, models) {
-  const tabs = WINDOWS.map((w) => (
-    `<a class="${w.key === chosen.key ? 'on' : ''}" href="?w=${w.key}">${w.label}</a>`
-  )).join('');
-
+  // The cards are the window selector. Two rows both offering today/7/30/all
+  // was the same choice asked twice.
   const summary = cards.map((c) => `
-    <div class="card">
-      <h2>${c.label}</h2>
-      <p class="big">${money(c.totals.micros)}</p>
-      <p class="dim">${count(c.totals.calls)} calls ${pricedNote(c.totals)}</p>
-    </div>
+    <a class="card ${c.key === chosen.key ? 'on' : ''}" href="?w=${c.key}">
+      <span class="card-label">${esc(c.label)}</span>
+      <span class="card-big">${money(c.totals.micros)}</span>
+      <span class="card-sub">${count(c.totals.calls)} ${c.totals.calls === 1 ? 'import' : 'imports'}</span>
+    </a>
   `).join('');
+
+  const totals = cards.find((c) => c.key === chosen.key)?.totals ?? { calls: 0, errors: 0, micros: 0 };
+  const worked = (totals.calls || 0) - (totals.errors || 0);
+  const perCall = totals.calls ? money(Math.round((totals.micros || 0) / totals.calls)) : null;
+  const headline = totals.calls
+    ? `${count(worked)} of ${count(totals.calls)} imports worked${perCall ? `, averaging ${perCall} each` : ''}.`
+    : 'No imports in this period yet.';
 
   return `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>Ruchi AI spend</title>
+<title>Ruchi</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { font: 15px/1.5 ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 24px; max-width: 900px; }
-  h1 { font-size: 20px; margin: 0 0 4px; }
-  h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; opacity: .6; margin: 0 0 6px; }
-  h3 { font-size: 15px; margin: 28px 0 8px; }
-  .dim { opacity: .6; }
-  .warn { color: #b45309; }
-  .sub { margin: 0 0 20px; opacity: .6; font-size: 13px; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
-  .card { border: 1px solid rgba(128,128,128,.3); border-radius: 10px; padding: 12px 14px; }
-  .big { font-size: 22px; margin: 0 0 2px; font-variant-numeric: tabular-nums; }
-  .card p { margin: 0; font-size: 13px; }
-  nav { margin: 24px 0 4px; display: flex; gap: 6px; flex-wrap: wrap; }
-  nav a { padding: 4px 10px; border: 1px solid rgba(128,128,128,.3); border-radius: 999px; text-decoration: none; color: inherit; font-size: 13px; }
-  nav a.on { background: rgba(128,128,128,.18); font-weight: 600; }
+  :root {
+    --bg: #FAFAF9; --panel: #FFFFFF; --ink: #2A1A1F; --muted: #6B6B66;
+    --line: #E7E7E2; --green: #47624F; --wash: #ECEFE9; --warn: #A3502F;
+    --shadow: 0 1px 2px rgba(0,0,0,.05), 0 8px 24px rgba(0,0,0,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14140F; --panel: #1D1D18; --ink: #EDEDE6; --muted: #9A9A92;
+      --line: #2E2E27; --green: #A8C4AE; --wash: #26302A; --warn: #E0A07C;
+      --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    margin: 0; padding: 28px 20px 64px; background: var(--bg); color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  header { margin-bottom: 22px; }
+  h1 { font-size: 21px; margin: 0; letter-spacing: -.01em; }
+  .sub { margin: 3px 0 0; color: var(--muted); font-size: 13.5px; }
+  h2 {
+    font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--muted); margin: 34px 0 10px;
+  }
+  .dim { color: var(--muted); }
+  .warn { color: var(--warn); font-weight: 600; }
+  .note { font-size: 12px; font-weight: 500; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .card {
+    display: flex; flex-direction: column; gap: 2px; padding: 13px 15px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    text-decoration: none; color: inherit; box-shadow: var(--shadow);
+    transition: border-color .12s, transform .12s;
+  }
+  .card:hover { border-color: var(--green); }
+  .card.on { border-color: var(--green); box-shadow: 0 0 0 1px var(--green), var(--shadow); }
+  .card-label { font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+  .card-big { font-size: 24px; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .card-sub { font-size: 12.5px; color: var(--muted); }
+
+  .headline { margin: 16px 0 0; font-size: 14.5px; color: var(--muted); }
+  .headline strong { color: var(--ink); font-weight: 650; }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; overflow: hidden; box-shadow: var(--shadow);
+  }
+  .panel + .panel { margin-top: 12px; }
+  .panel-head { padding: 13px 16px 0; }
+  .panel-head h3 { margin: 0; font-size: 15px; font-weight: 650; }
+  .panel-head p { margin: 3px 0 0; font-size: 13px; color: var(--muted); }
+
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-  th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid rgba(128,128,128,.18); }
-  th:first-child, td:first-child { text-align: left; }
-  th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; opacity: .6; font-weight: 600; }
-  .name { font-family: ui-monospace, monospace; font-size: 13px; }
-  .empty { text-align: center; opacity: .5; padding: 18px; }
-  .tag { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding: 1px 7px; border-radius: 999px; border: 1px solid rgba(128,128,128,.35); }
-  .tag--pro { border-color: rgba(202,138,4,.6); color: #b45309; font-weight: 600; }
-  form.limit { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
-  form.limit input, form.limit select, form.limit button { font: inherit; font-size: 13px; padding: 3px 6px; border: 1px solid rgba(128,128,128,.4); border-radius: 6px; background: transparent; color: inherit; }
-  form.limit input { width: 5.5em; text-align: right; }
-  form.limit button { cursor: pointer; background: rgba(128,128,128,.15); }
-  .foot { margin-top: 32px; font-size: 12px; opacity: .55; }
+  th, td { text-align: left; padding: 10px 16px; border-top: 1px solid var(--line); }
+  thead th {
+    border-top: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--muted); font-weight: 700; padding-top: 14px; padding-bottom: 8px;
+  }
+  .panel-head + table thead th { border-top: 1px solid var(--line); margin-top: 10px; }
+  td.num, th.num { text-align: right; }
+  td.when, th.when { text-align: right; font-size: 12.5px; white-space: nowrap; }
+  tbody tr:hover { background: color-mix(in srgb, var(--wash) 55%, transparent); }
+  .empty { text-align: center; color: var(--muted); padding: 26px 16px; }
+
+  .tag {
+    display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+    padding: 2px 9px; border-radius: 999px; background: var(--wash); color: var(--green);
+  }
+  .tag--pro { background: var(--green); color: var(--panel); }
+  .ok-dot { color: var(--muted); }
+  .soon { font-size: 11.5px; color: var(--muted); font-style: italic; margin-left: 6px; }
+
+  form.set { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  form.set input, form.set select, form.set button {
+    font: inherit; font-size: 13.5px; padding: 6px 9px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--bg); color: inherit;
+  }
+  form.set input[type=number] { width: 5.5em; text-align: right; }
+  form.set input.wide { width: 15em; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12.5px; }
+  form.set button {
+    cursor: pointer; background: var(--green); color: var(--panel);
+    border-color: var(--green); font-weight: 600; padding: 6px 14px;
+  }
+  form.set button:hover { opacity: .88; }
+
+  .foot { margin-top: 30px; font-size: 12.5px; color: var(--muted); }
+  @media (max-width: 640px) {
+    th, td { padding: 9px 11px; }
+    .when, th.when { display: none; }
+  }
 </style>
-<h1>Ruchi AI spend</h1>
-<p class="sub">Metadata only. No recipes, prompts, or real identities are stored here.</p>
+<div class="wrap">
+
+<header>
+  <h1>Ruchi</h1>
+  <p class="sub">What imports are costing. Metadata only, no recipes or real identities.</p>
+</header>
 
 <div class="cards">${summary}</div>
+<p class="headline">${headline}</p>
 
-<nav>${tabs}</nav>
-<p class="dim" style="font-size:13px;margin:0">Tables below cover ${esc(chosen.label.toLowerCase())}.</p>
+<h2>Where it went</h2>
 
-<h3>By feature</h3>
-<table>
-  <tr><th>Feature</th><th>Calls</th><th>Spend</th><th>Errors</th><th>Last seen</th></tr>
-  ${rows(features, (r) => `${esc(r.name)}<span class="dim"> ${esc(FEATURE_LABEL[r.name] ?? '')}</span>`)}
-</table>
+<div class="panel">
+  <table>
+    <thead><tr><th>Import type</th><th class="num">Imports</th><th class="num">Spend</th><th class="num">Failed</th><th class="when">Last one</th></tr></thead>
+    <tbody>${rows(features, (r) => featureName(r.name), { empty: `No imports in the last ${esc(chosen.label.toLowerCase())}.` })}</tbody>
+  </table>
+</div>
 
-<h3>By plan</h3>
-<table>
-  <tr><th>Plan</th><th>Calls</th><th>Spend</th><th>Errors</th><th>Last seen</th></tr>
-  ${rows(plans, (r) => planTag(r.name))}
-</table>
+<div class="panel">
+  <table>
+    <thead><tr><th>Membership</th><th class="num">Imports</th><th class="num">Spend</th><th class="num">Failed</th><th class="when">Last one</th></tr></thead>
+    <tbody>${rows(plans, (r) => planTag(r.name), { empty: 'Nothing to split by membership yet.' })}</tbody>
+  </table>
+</div>
 
-<h3>By person</h3>
-<table>
-  <tr><th>Person</th><th>Plan</th><th>Calls</th><th>Spend</th><th>Errors</th><th>Last seen</th></tr>
-  ${rows(people, (r) => `<span title="${esc(r.name)}">${esc(nickname(r.name))}</span>`, { withPlan: true })}
-</table>
-
-<h3>Models</h3>
-<p class="dim" style="font-size:13px;margin:0 0 8px">
-  The whole difference between the tiers. A free import is tidied by the cheap
-  model and opens in the recipe editor to confirm; a Pro import is
-  reconstructed by the good one and saves itself. Takes effect without an app
-  release or a redeploy. A value that is not a model id is refused, and a model
-  that cannot be pushed shows as not applied rather than as live.
+<div class="panel">
+  <table>
+    <thead><tr><th>Cook</th><th>Plan</th><th class="num">Imports</th><th class="num">Spend</th><th class="num">Failed</th><th class="when">Last one</th></tr></thead>
+    <tbody>${rows(people, (r) => `<span title="${esc(r.name)}">${esc(nickname(r.name))}</span>`, { withPlan: true, empty: 'No cooks have imported yet.' })}</tbody>
+  </table>
+</div>
+<p class="dim" style="font-size:12.5px;margin:8px 2px 0">
+  Names are made up from a one-way code. There is no way back to a person from here.
 </p>
-<table>
-  <tr><th>Plan</th><th>Model</th><th>State</th></tr>
-  ${modelRows(models)}
-</table>
 
-<h3>Limits</h3>
-<p class="dim" style="font-size:13px;margin:0 0 8px">
-  Per feature and per membership, never per person. A saved value reaches both
-  services through Upstash, so it takes effect without an app release or a
-  redeploy. Zero switches a tier off entirely.
+<h2>Settings</h2>
+
+<div class="panel">
+  <div class="panel-head">
+    <h3>Which model each membership uses</h3>
+    <p>This is the whole difference between Free and Pro. Changes apply within seconds, with no app release.</p>
+  </div>
+  <table>
+    <thead><tr><th>Membership</th><th>What it does</th><th>Model</th><th>State</th></tr></thead>
+    <tbody>${modelRows(models)}</tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h3>How many imports each membership gets</h3>
+    <p>Per import type and membership, never per person. Zero turns that combination off entirely.</p>
+  </div>
+  <table>
+    <thead><tr><th>Import type</th><th>Membership</th><th>Allowance</th><th>State</th></tr></thead>
+    <tbody>${limitRows(limits)}</tbody>
+  </table>
+</div>
+
+<p class="foot">
+  Times are UTC. Spend is what the provider reported; a call it did not price is
+  counted but adds nothing to a total.
 </p>
-<table>
-  <tr><th>Feature</th><th>Plan</th><th>Allowance</th><th>State</th></tr>
-  ${limitRows(limits)}
-</table>
-
-<p class="foot">Times UTC. Spend is what the provider reported; unpriced calls are counted but add nothing to a total.</p>
+</div>
 `;
 }
 
