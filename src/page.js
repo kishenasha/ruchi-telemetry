@@ -204,6 +204,13 @@ export function shell(here, body) {
     var saved = localStorage.getItem('theme');
     if (saved) document.documentElement.dataset.theme = saved;
   } catch (e) {}
+  // One cook opens at a time is not a rule worth enforcing; clicking the name
+  // itself still follows the link to their own page.
+  document.addEventListener('click', function (e) {
+    var cell = e.target.closest && e.target.closest('tbody.cook > tr:first-child > td:first-child');
+    if (!cell || e.target.closest('a')) return;
+    cell.closest('tbody.cook').classList.toggle('open');
+  });
   function flipTheme() {
     var root = document.documentElement;
     var dark = root.dataset.theme
@@ -348,6 +355,23 @@ const STYLE = `
   .tag { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; padding: 2px 9px; border-radius: 999px; background: var(--wash); color: var(--deep); }
   .tag--pro { background: var(--green); color: var(--panel); }
   .tag--trial { background: transparent; color: var(--green); box-shadow: inset 0 0 0 1px var(--green); }
+  /* A membership this cook has moved on from. Struck through rather than
+     hidden: "used the trial and never bought" is the thing worth seeing. */
+  .spent { opacity: .55; text-decoration: line-through; text-decoration-thickness: 1px; }
+
+  /* One cook is one tbody. Their tier history is folded away until the row is
+     opened, which is a plain CSS toggle: no script, no state to get wrong. */
+  tbody.cook tr.sub { display: none; }
+  tbody.cook.open tr.sub { display: table-row; }
+  tbody.cook.open tr.sub td:first-child { padding-left: 34px; font-size: 12.5px; }
+  tbody.cook > tr:first-child > td:first-child { position: relative; padding-left: 34px; cursor: pointer; }
+  tbody.cook > tr:first-child > td:first-child::before {
+    content: '▸'; position: absolute; left: 17px; color: var(--muted);
+    transition: transform .12s; display: inline-block;
+  }
+  tbody.cook.open > tr:first-child > td:first-child::before { transform: rotate(90deg); }
+  tbody.cook + tbody.cook > tr:first-child > td { border-top: 1px solid var(--line); }
+  tbody.cook.open > tr:first-child { background: color-mix(in srgb, var(--wash) 45%, transparent); }
   .grade-note { display: block; font-size: 12px; margin-top: 3px; }
   .range { color: var(--muted); }
   .range::before { content: '·'; margin: 0 6px; }

@@ -6,69 +6,67 @@
  * whether the push actually landed.
  */
 
-// Kept in step with lib/quota.py's DEFAULT_LIMITS by hand. These are what the
-// services fall back to, so the dashboard shows them as the live policy until
-// something overrides them.
+// Kept in step with lib/quota.py's DEFAULT_LIMITS by hand.
 //
-// quota.py also carries a quick_import/pro default, deliberately not listed
-// here: a Pro cook is graded straight onto smart_import and never reaches it,
-// so offering it as a setting would be a dial connected to nothing. The
-// server keeps its default as a floor in case that routing ever changes.
-export const TIERS = [
-  { feature: 'smart_import', plan: 'free', grade: 'trial', max: 5, period: 'life' },
-  { feature: 'quick_import', plan: 'free', grade: 'free', max: 10, period: 'month' },
-  { feature: 'smart_import', plan: 'pro', grade: 'pro', max: 6000, period: 'month' },
-  // Settable already so the numbers are agreed before the features land.
-  { feature: 'text_import', plan: 'free', grade: 'free', max: 5, period: 'life', built: false },
-  { feature: 'text_import', plan: 'pro', grade: 'pro', max: 6000, period: 'month', built: false },
-  { feature: 'image_import', plan: 'free', grade: 'free', max: 3, period: 'life', built: false },
-  { feature: 'image_import', plan: 'pro', grade: 'pro', max: 6000, period: 'month', built: false },
+// Three memberships, one axis: a trial is a free cook spending their taste of
+// Pro, so it runs Pro's model and saves without the editor. A recipe URL is
+// the one source with two grades behind it (smart_import is the good model,
+// quick_import the cheap one); pasted text and a photograph have one grade
+// each and split on plan alone.
+export const SOURCES = [
+  { source: 'url', label: 'Recipe URL' },
+  { source: 'text', label: 'Pasted text', built: false },
+  { source: 'image', label: 'Photo', built: false },
 ];
 
-// What the cook was reaching for. Both grades of URL import are one button to
-// them, so both ids name the same thing here; the grade beside it says which
-// of the two actually ran.
-export const SOURCE_LABEL = {
-  smart_import: 'Recipe URL',
-  quick_import: 'Recipe URL',
-  text_import: 'Pasted text',
-  image_import: 'Photo',
-};
+export const TIERS = [
+  { source: 'url', feature: 'smart_import', plan: 'trial', max: 5, period: 'life' },
+  { source: 'url', feature: 'quick_import', plan: 'free', max: 10, period: 'month' },
+  { source: 'url', feature: 'smart_import', plan: 'pro', max: 6000, period: 'month' },
+  { source: 'text', feature: 'text_import', plan: 'trial', max: 5, period: 'life', built: false },
+  { source: 'text', feature: 'text_import', plan: 'free', max: 5, period: 'month', built: false },
+  { source: 'text', feature: 'text_import', plan: 'pro', max: 6000, period: 'month', built: false },
+  { source: 'image', feature: 'image_import', plan: 'trial', max: 3, period: 'life', built: false },
+  { source: 'image', feature: 'image_import', plan: 'free', max: 3, period: 'month', built: false },
+  { source: 'image', feature: 'image_import', plan: 'pro', max: 6000, period: 'month', built: false },
+];
 
-export const GRADE_LABEL = { trial: 'Pro trial', free: 'Free', pro: 'Pro' };
+// Kept in step with server/lib/models.py's DEFAULT_MODELS by hand. Two rows
+// per source, not three: a trial reads Pro's row, which is what makes it a
+// taste of Pro rather than a description of one.
+export const MODELS = [
+  { source: 'url', feature: 'quick_import', plan: 'free', model: 'google/gemini-2.5-flash-lite' },
+  { source: 'url', feature: 'smart_import', plan: 'pro', model: 'openai/gpt-5.6-luna' },
+  { source: 'text', feature: 'text_import', plan: 'free', model: 'google/gemini-2.5-flash-lite', built: false },
+  { source: 'text', feature: 'text_import', plan: 'pro', model: 'openai/gpt-5.6-luna', built: false },
+  { source: 'image', feature: 'image_import', plan: 'free', model: 'google/gemini-2.5-flash-lite', built: false },
+  { source: 'image', feature: 'image_import', plan: 'pro', model: 'openai/gpt-5.6-luna', built: false },
+];
 
-/** The one place a feature and a membership become the grade a cook felt.
- * Only a free cook's smart import is the trial; everything else is simply
- * what their membership buys. */
-export function gradeOf(feature, plan) {
-  return plan === 'free' && feature === 'smart_import' ? 'trial' : plan;
-}
+// The one vocabulary for a membership, used everywhere a plan is shown.
+export const PLAN_LABEL = { trial: 'Pro trial', free: 'Free', pro: 'Pro' };
 
-export const GRADE_NOTE = {
-  trial: 'A free cook on the good model, saving without the editor',
-  free: 'A free cook on the cheap model, confirming before it saves',
+export const PLAN_NOTE = {
+  trial: 'A free cook spending their taste of Pro: the good model, saving without the editor',
+  free: 'The cheap model, with the cook confirming before it saves',
   pro: 'What Pro buys, and a ceiling no real cook reaches',
 };
 
-// Kept in step with server/lib/models.py's DEFAULT_MODELS by hand. Keyed by
-// feature as well as plan: a photograph and a pasted paragraph are not the
-// same job as a scraped page, and each needs re-pointing on its own without
-// dragging the others with it.
-//
-// smart_import is the same model on both rows on purpose. A free cook's
-// trial is a real taste of Pro or it demonstrates nothing.
-export const MODELS = [
-  { feature: 'smart_import', plan: 'free', grade: 'trial', model: 'openai/gpt-5.6-luna' },
-  { feature: 'quick_import', plan: 'free', grade: 'free', model: 'google/gemini-2.5-flash-lite' },
-  { feature: 'smart_import', plan: 'pro', grade: 'pro', model: 'openai/gpt-5.6-luna' },
-  { feature: 'text_import', plan: 'free', grade: 'free', model: 'google/gemini-2.5-flash-lite', built: false },
-  { feature: 'text_import', plan: 'pro', grade: 'pro', model: 'openai/gpt-5.6-luna', built: false },
-  { feature: 'image_import', plan: 'free', grade: 'free', model: 'google/gemini-2.5-flash-lite', built: false },
-  { feature: 'image_import', plan: 'pro', grade: 'pro', model: 'openai/gpt-5.6-luna', built: false },
-];
+// Which source a usage row belongs to, for a table grouped the way a cook
+// experiences it rather than the way the server names it.
+export const SOURCE_OF = {
+  smart_import: 'url', quick_import: 'url', text_import: 'text', image_import: 'image',
+};
 
-// Same rule server side. A value that fails it is refused here rather than
-// saved and silently ignored by the services.
+export const SOURCE_LABEL = Object.fromEntries(SOURCES.map((s) => [s.source, s.label]));
+
+/** The membership a usage row represents. Only a URL import needs the feature
+ * to tell trial from free; everything else is the plan as recorded. */
+export function planOf(featureId, plan) {
+  if (plan === 'free' && featureId === 'smart_import') return 'trial';
+  return plan;
+}
+
 export const MODEL_ID = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/;
 
 export const PERIODS = ['day', 'month', 'year', 'life'];

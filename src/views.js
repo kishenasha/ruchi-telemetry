@@ -11,17 +11,19 @@ import {
   pricedNote, rangeLabel, shell, stat, state, when, windowFrom, windowPicker,
 } from './page.js';
 import {
-  GRADE_LABEL, GRADE_NOTE, PERIODS, PERIOD_LABEL, SOURCE_LABEL,
-  gradeOf, readLimits, readModels,
+  PERIODS, PERIOD_LABEL, PLAN_LABEL, PLAN_NOTE, SOURCES, SOURCE_LABEL, SOURCE_OF,
+  planOf, readLimits, readModels,
 } from './settings.js';
 
 const PER_PAGE = 50;
 
-// A row's own grade, named the way the app names it to a cook.
-function gradeCell(row) {
-  const grade = gradeOf(row.feature_id, row.plan);
-  return `${gradeTag(grade, GRADE_LABEL[grade])}
-    <span class="dim src">${esc(SOURCE_LABEL[row.feature_id] ?? row.feature_id)}</span>`;
+// A usage row named the way a cook experienced it: which import, and which
+// membership they were on at the time.
+function usageCell(row) {
+  const plan = planOf(row.feature_id, row.plan);
+  const source = SOURCE_OF[row.feature_id];
+  return `${gradeTag(plan, PLAN_LABEL[plan] ?? plan)}
+    <span class="dim src">${esc(SOURCE_LABEL[source] ?? row.feature_id)}</span>`;
 }
 
 function head(title, lede, chosen = null, right = '') {
@@ -37,7 +39,7 @@ function head(title, lede, chosen = null, right = '') {
 export async function overview(url, env) {
   const chosen = windowFrom(url);
   const limits = await readLimits(env);
-  const trialLimit = limits.find((l) => l.grade === 'trial')?.max ?? 5;
+  const trialLimit = limits.find((l) => l.feature === 'smart_import' && l.plan === 'trial')?.max ?? 5;
 
   const [now, before, series, grades, failed, trial, top] = await Promise.all([
     db.totals(env, chosen.days),
@@ -88,7 +90,7 @@ ${panel('', '', `<table>
   <thead><tr><th>Grade</th><th class="num">Imports</th><th class="num">Spend</th><th class="num">Failed</th><th class="when">Last one</th></tr></thead>
   <tbody>${grades.length
     ? grades.map((r) => `<tr>
-        <td>${gradeCell(r)}</td>
+        <td>${usageCell(r)}</td>
         <td class="num">${count(r.calls)}</td>
         <td class="num">${money(r.micros)}${pricedNote(r)}</td>
         <td class="num">${failures(r)}</td>
@@ -103,7 +105,7 @@ ${panel('', '', `<table>
   <tbody>${failed.length
     ? failed.map((r) => `<tr>
         <td><code>${esc(r.name)}</code></td>
-        <td>${gradeCell(r)}</td>
+        <td>${usageCell(r)}</td>
         <td class="num">${count(r.calls)}</td>
         <td class="when">${when(r.seen)}</td>
       </tr>`).join('')
@@ -135,7 +137,8 @@ const SORTS = ['spend', 'imports', 'failed', 'recent'];
 export async function cooks(url, env) {
   const chosen = windowFrom(url);
   const sort = SORTS.includes(url.searchParams.get('s')) ? url.searchParams.get('s') : 'spend';
-  const plan = ['free', 'pro'].includes(url.searchParams.get('plan')) ? url.searchParams.get('plan') : 'all';
+  const plan = ['trial', 'free', 'pro'].includes(url.searchParams.get('plan'))
+    ? url.searchParams.get('plan') : 'all';
   // The search is a hash prefix, so anything that is not hex cannot match and
   // is dropped rather than sent to the database.
   const search = (url.searchParams.get('q') ?? '').toLowerCase().replace(/[^0-9a-f]/g, '').slice(0, 64);
@@ -163,6 +166,7 @@ export async function cooks(url, env) {
       <input type="search" name="q" value="${esc(search)}" placeholder="Start of a cook's code" spellcheck="false">
       <select name="plan">
         <option value="all"${plan === 'all' ? ' selected' : ''}>Every membership</option>
+        <option value="trial"${plan === 'trial' ? ' selected' : ''}>Pro trial only</option>
         <option value="free"${plan === 'free' ? ' selected' : ''}>Free only</option>
         <option value="pro"${plan === 'pro' ? ' selected' : ''}>Pro only</option>
       </select>
@@ -171,26 +175,19 @@ export async function cooks(url, env) {
     </form>`;
 
   const body = `
-${head('Cooks', 'One row per person per membership. A cook who upgraded shows on both sides.', chosen, windowPicker(url, chosen))}
+${head('Cooks', 'One row each. Open one to see every membership they have been on.', chosen, windowPicker(url, chosen))}
 ${filters}
 ${panel('', '', `<table>
   <thead><tr>
-    <th>Cook</th><th>Plan</th>
+    <th>Cook</th><th>Now on</th>
     <th class="num">${sorter('imports', 'Imports')}</th>
     <th class="num">${sorter('spend', 'Spend')}</th>
     <th class="num">${sorter('failed', 'Failed')}</th>
     <th class="when">${sorter('recent', 'Last one')}</th>
   </tr></thead>
-  <tbody>${rows.length
-    ? rows.map((r) => `<tr>
-        <td><a class="who" href="/cooks?id=${esc(r.name)}&amp;w=${esc(chosen.key)}">${esc(nickname(r.name))}</a></td>
-        <td>${planTag(r.plan)}</td>
-        <td class="num">${count(r.calls)}</td>
-        <td class="num">${money(r.micros)}${pricedNote(r)}</td>
-        <td class="num">${failures(r)}</td>
-        <td class="when">${when(r.seen)}</td>
-      </tr>`).join('')
-    : empty(search ? 'No cook starts with that code.' : 'No cooks have imported yet.', 6)}</tbody>
+  ${rows.length ? rows.map((r) => cookRows(r, chosen)).join('') : `<tbody>${empty(
+    search ? 'No cook starts with that code.' : 'No cooks have imported yet.', 6,
+  )}</tbody>`}
 </table>`)}
 <div class="pager">
   <a class="${page === 0 ? 'off' : ''}" href="${link({ p: Math.max(0, page - 1) })}">Back</a>
@@ -201,10 +198,55 @@ ${panel('', '', `<table>
   return shell('/cooks', body);
 }
 
+/**
+ * One cook as a row that opens. Collapsed it shows where they are now;
+ * opened it shows every membership they have been on, with a spent one
+ * struck through so "used the trial and never bought" reads at a glance.
+ *
+ * Which membership is current is read off the most recent row rather than
+ * stored: a cook who upgraded has Pro rows newer than their trial ones.
+ */
+function cookRows(cook, chosen) {
+  const tiers = cook.tiers ?? [];
+  const seenPlans = [];
+  for (const tier of tiers) {
+    const plan = planOf(tier.feature_id, tier.plan);
+    if (!seenPlans.includes(plan)) seenPlans.push(plan);
+  }
+  // tiers arrive newest first, so the first plan named is the current one.
+  const current = seenPlans[0] ?? 'free';
+  const spent = (plan) => plan !== current && (plan === 'trial' || plan === 'pro');
+
+  const history = tiers.map((tier) => {
+    const plan = planOf(tier.feature_id, tier.plan);
+    const source = SOURCE_OF[tier.feature_id];
+    return `<tr class="sub">
+      <td class="dim">${esc(SOURCE_LABEL[source] ?? tier.feature_id)}</td>
+      <td><span class="${spent(plan) ? 'spent' : ''}">${gradeTag(plan, PLAN_LABEL[plan] ?? plan)}</span></td>
+      <td class="num">${count(tier.calls)}</td>
+      <td class="num">${money(tier.micros)}${pricedNote(tier)}</td>
+      <td class="num">${failures(tier)}</td>
+      <td class="when">${when(tier.seen)}</td>
+    </tr>`;
+  }).join('');
+
+  return `<tbody class="cook">
+    <tr>
+      <td><a class="who" href="/cooks?id=${esc(cook.name)}&amp;w=${esc(chosen.key)}">${esc(nickname(cook.name))}</a></td>
+      <td>${gradeTag(current, PLAN_LABEL[current] ?? current)}</td>
+      <td class="num">${count(cook.calls)}</td>
+      <td class="num">${money(cook.micros)}${pricedNote(cook)}</td>
+      <td class="num">${failures(cook)}</td>
+      <td class="when">${when(cook.seen)}</td>
+    </tr>
+    ${history}
+  </tbody>`;
+}
+
 export async function oneCook(url, env, hash) {
   const chosen = windowFrom(url);
   const limits = await readLimits(env);
-  const trialLimit = limits.find((l) => l.grade === 'trial')?.max ?? 5;
+  const trialLimit = limits.find((l) => l.feature === 'smart_import' && l.plan === 'trial')?.max ?? 5;
   const [{ totals, features, days }, used] = await Promise.all([
     db.cook(env, hash, chosen.days),
     db.trialUsed(env, hash),
@@ -234,7 +276,7 @@ ${panel('', '', `<table>
   <thead><tr><th>Grade</th><th class="num">Imports</th><th class="num">Spend</th><th class="num">Failed</th><th class="when">Last one</th></tr></thead>
   <tbody>${features.length
     ? features.map((r) => `<tr>
-        <td>${gradeCell({ feature_id: r.name, plan: r.plan })}</td>
+        <td>${usageCell({ feature_id: r.name, plan: r.plan })}</td>
         <td class="num">${count(r.calls)}</td>
         <td class="num">${money(r.micros)}${pricedNote(r)}</td>
         <td class="num">${failures(r)}</td>
@@ -307,10 +349,21 @@ ${panel('', 'Not required to review a name above. A bonus when it exists, never 
 export async function settings(env, failure = null) {
   const [limits, models] = await Promise.all([readLimits(env), readModels(env)]);
 
-  const modelRows = models.map((m) => `
-    <tr>
-      <td><strong>${esc(SOURCE_LABEL[m.feature] ?? m.feature)}</strong>${m.built === false ? ' <span class="soon">not built yet</span>' : ''}</td>
-      <td>${gradeTag(m.grade, GRADE_LABEL[m.grade])}</td>
+  // Grouped by source: a cook picks where a recipe comes from, and only then
+  // does the membership matter. The first row of each group carries the name.
+  const grouped = (rows, render) => SOURCES.flatMap((s) => {
+    const mine = rows.filter((r) => r.source === s.source);
+    return mine.map((row, i) => `
+      <tr${i === 0 && s.source !== SOURCES[0].source ? ' class="group"' : ''}>
+        <td>${i === 0
+    ? `<strong>${esc(s.label)}</strong>${s.built === false ? ' <span class="soon">not built yet</span>' : ''}`
+    : ''}</td>
+        ${render(row)}
+      </tr>`).join('');
+  }).join('');
+
+  const modelRows = grouped(models, (m) => `
+      <td>${gradeTag(m.plan, PLAN_LABEL[m.plan])}</td>
       <td>
         <form method="post" class="set">
           <input type="hidden" name="feature" value="${esc(m.feature)}">
@@ -320,13 +373,10 @@ export async function settings(env, failure = null) {
           <button type="submit">Save</button>
           ${state(m)}
         </form>
-      </td>
-    </tr>`).join('');
+      </td>`);
 
-  const limitRows = limits.map((l) => `
-    <tr>
-      <td><strong>${esc(SOURCE_LABEL[l.feature] ?? l.feature)}</strong>${l.built === false ? ' <span class="soon">not built yet</span>' : ''}</td>
-      <td>${gradeTag(l.grade, GRADE_LABEL[l.grade])}<span class="lede grade-note">${esc(GRADE_NOTE[l.grade])}</span></td>
+  const limitRows = grouped(limits, (l) => `
+      <td>${gradeTag(l.plan, PLAN_LABEL[l.plan])}<span class="lede grade-note">${esc(PLAN_NOTE[l.plan])}</span></td>
       <td>
         <form method="post" class="set">
           <input type="hidden" name="feature" value="${esc(l.feature)}">
@@ -338,20 +388,19 @@ export async function settings(env, failure = null) {
           <button type="submit">Save</button>
           ${state(l)}
         </form>
-      </td>
-    </tr>`).join('');
+      </td>`);
 
   const body = `
 ${head('Settings', 'Changes reach the servers within seconds. No app release, no redeploy.')}
 ${failure ? `<p class="warn">That change was refused: ${esc(failure)}.</p>` : ''}
 
-${panel('Which model each import runs on', 'A trial import runs the model Pro pays for, which is what makes it a taste of it.', `<table>
-  <thead><tr><th>Import</th><th>Grade</th><th>Model</th></tr></thead>
+${panel('Which model each import runs on', "Pro trial has no row of its own: it runs Pro's model, which is what makes it a taste of it.", `<table>
+  <thead><tr><th>Import</th><th>Membership</th><th>Model</th></tr></thead>
   <tbody>${modelRows}</tbody>
 </table>`)}
 
-${panel('How many imports each grade gets', 'Per grade, never per person. Zero turns that combination off.', `<table>
-  <thead><tr><th>Import</th><th>Grade</th><th>Allowance</th></tr></thead>
+${panel('How many imports each membership gets', 'Per membership, never per person. Zero turns that combination off.', `<table>
+  <thead><tr><th>Import</th><th>Membership</th><th>Allowance</th></tr></thead>
   <tbody>${limitRows}</tbody>
 </table>`)}
 `;

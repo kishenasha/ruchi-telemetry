@@ -152,25 +152,44 @@ export async function cooks(env, { days, sort = 'spend', plan = 'all', search = 
   const window = bounds(days);
   const extra = [];
   const binds = [];
-  if (plan === 'free' || plan === 'pro') {
-    extra.push('plan = ?');
-    binds.push(plan);
+  if (plan === 'free' || plan === 'pro' || plan === 'trial') {
+    // A trial is recorded as a free plan on smart_import; nothing else is.
+    if (plan === 'trial') extra.push("plan = 'free' AND feature_id = 'smart_import'");
+    else if (plan === 'free') extra.push("(plan = 'free' AND feature_id != 'smart_import')");
+    else extra.push('plan = ?'), binds.push(plan);
   }
   if (search) {
     extra.push('user_hash LIKE ?');
     binds.push(`${search}%`);
   }
 
+  // One row per person, with their memberships rolled up inside it. The page
+  // is a list of cooks, not a list of cook-and-tier pairs: the same human
+  // appearing three times was the thing that made this unreadable.
   const order = SORTS[sort] ?? SORTS.spend;
-  const columns = `user_hash AS name, plan, ${SUMS}, MAX(last_seen) AS seen`;
-  const tail = `GROUP BY user_hash, plan ORDER BY ${order} LIMIT ${perPage + 1} OFFSET ${page * perPage}`;
+  const columns = `user_hash AS name, ${SUMS}, MAX(last_seen) AS seen`;
+  const tail = `GROUP BY user_hash ORDER BY ${order} LIMIT ${perPage + 1} OFFSET ${page * perPage}`;
   const { results } = await scoped(env, columns, tail, window, extra, binds).all();
+  const rows = (results ?? []).slice(0, perPage);
+  const more = (results ?? []).length > perPage;
+  if (!rows.length) return { rows, more };
 
-  const rows = results ?? [];
-  // One row past the page is asked for rather than counted: knowing whether a
-  // next page exists is all the pager needs, and a COUNT over every group is
-  // the expensive part of this query.
-  return { rows: rows.slice(0, perPage), more: rows.length > perPage };
+  // The tiers each of those cooks actually used, in one more query rather
+  // than one per cook.
+  const names = rows.map((r) => r.name);
+  const placeholders = names.map(() => '?').join(', ');
+  const { results: tiers } = await scoped(
+    env,
+    `user_hash AS name, feature_id, plan, ${SUMS}, MAX(last_seen) AS seen`,
+    'GROUP BY user_hash, feature_id, plan ORDER BY seen DESC',
+    window,
+    [`user_hash IN (${placeholders})`],
+    names,
+  ).all();
+
+  const byCook = new Map(names.map((n) => [n, []]));
+  for (const tier of tiers ?? []) byCook.get(tier.name)?.push(tier);
+  return { rows: rows.map((r) => ({ ...r, tiers: byCook.get(r.name) ?? [] })), more };
 }
 
 /** One cook: their totals, their split by import type, and their day by day. */
