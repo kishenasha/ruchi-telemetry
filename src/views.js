@@ -53,6 +53,16 @@ export async function overview(url, env) {
        ${money(Math.round((now.micros / span) * 30))} a month at this rate.</p>`
     : '';
 
+  // Until there is more than one day of it, every window covers the same day
+  // and every card reads the same, which looks like a switch that does
+  // nothing. Says so rather than leaving it to be worked out. Disappears on
+  // its own the day a second day of data exists.
+  const used = series.filter((d) => d.calls > 0);
+  const oneDay = now.calls && used.length === 1
+    ? `<p class="lede">Every import so far landed on ${esc(used[0].day)}, so each window
+       is reporting that one day. They will differ once there is more than a day of it.</p>`
+    : '';
+
   const stats = [
     stat('Spend', money(now.micros), {
       sub: perCall ? `${perCall} an import` : 'nothing yet',
@@ -74,7 +84,7 @@ export async function overview(url, env) {
   const body = `
 ${head('Overview', 'What imports are costing.', chosen, windowPicker(url, chosen))}
 <div class="stats">${stats}</div>
-${projection}
+${projection}${oneDay}
 
 <h2>Day by day</h2>
 ${chart(series)}
