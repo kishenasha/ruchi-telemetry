@@ -113,3 +113,28 @@ test('anything that is not a real hash reads as anonymous, never as a name', () 
   assert.equal(nickname(null), 'anonymous');
   assert.equal(nickname('not-a-hash'), 'anonymous');
 });
+
+// ruchi-ai sends an error class with every record and this service used to
+// drop it. Now that it is stored, the shape is the whole guarantee: a class
+// name cannot carry a page, a prompt or a model's words, and a free text
+// message could.
+test('a failure keeps its class name', () => {
+  const record = readRecord({ ...valid(), status: 'error', error_class: 'HTTPError:429' });
+  assert.equal(record.errorClass, 'HTTPError:429');
+  assert.equal(record.errored, 1);
+});
+
+test('anything that is not a bare class name is dropped, not stored', () => {
+  for (const bad of [
+    'Failed to parse: <html><body>Grandma\'s secret pie',
+    'error with spaces', 'HTTPError:99999', '429', '', null, { toString: () => 'X' },
+  ]) {
+    const record = readRecord({ ...valid(), status: 'error', error_class: bad });
+    assert.equal(record.errorClass, null, String(bad));
+  }
+});
+
+test('a call that worked carries no failure reason even if one is sent', () => {
+  const record = readRecord({ ...valid(), status: 'ok', error_class: 'HTTPError:429' });
+  assert.equal(record.errorClass, null);
+});

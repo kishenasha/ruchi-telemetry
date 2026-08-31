@@ -18,6 +18,11 @@ const SLUG = /^[a-z0-9_]{1,64}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
+// A class name from ruchi-ai, optionally with an HTTP status: HTTPError:429.
+// Anything that does not match this shape is dropped rather than stored, so a
+// message or a fragment of a page can never arrive by being added upstream.
+const ERROR_CLASS = /^[A-Za-z][A-Za-z0-9_]{0,63}(:\d{1,3})?$/;
+
 export { nickname } from './page.js';
 export { MODEL_ID } from './settings.js';
 
@@ -103,6 +108,15 @@ async function ingest(request, env) {
     record.inputTokens, record.outputTokens, record.latencyMs, now, now,
   ).run();
 
+  if (record.errorClass) {
+    await env.DB.prepare(`
+      INSERT INTO errors_daily (day, feature_id, plan, error_class, count, first_seen, last_seen)
+      VALUES (?, ?, ?, ?, 1, ?, ?)
+      ON CONFLICT (day, feature_id, plan, error_class) DO UPDATE SET
+        count = count + 1, last_seen = excluded.last_seen
+    `).bind(record.day, record.featureId, record.plan, record.errorClass, now, now).run();
+  }
+
   return json({ ok: true });
 }
 
@@ -135,6 +149,14 @@ export function readRecord(body) {
     featureId,
     plan,
     errored: body.status === 'ok' ? 0 : 1,
+    // Only on a call that actually failed, and only in the shape above. The
+    // type check is not decoration: RegExp.test stringifies what it is given,
+    // so an object with the right toString would pass and then be stored as
+    // the object.
+    errorClass: body.status !== 'ok' && typeof body.error_class === 'string'
+      && ERROR_CLASS.test(body.error_class)
+      ? body.error_class
+      : null,
     costMicros,
     costKnown: costKnown ? 1 : 0,
     inputTokens: whole(body.input_tokens),

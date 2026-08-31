@@ -25,17 +25,9 @@ export const TIERS = [
   { feature: 'image_import', plan: 'pro', grade: 'pro', max: 6000, period: 'month', built: false },
 ];
 
-// Two ways to name the same four ids, because two pages ask different things
-// of them. A usage breakdown cares which model ran, so it separates the two
-// grades of URL import; the settings page cares what the cook was reaching
-// for, and both grades of URL import are one button to them.
-export const FEATURE_LABEL = {
-  smart_import: 'Recipe URL, saves itself',
-  quick_import: 'Recipe URL, cook confirms',
-  text_import: 'Pasted text',
-  image_import: 'Photo',
-};
-
+// What the cook was reaching for. Both grades of URL import are one button to
+// them, so both ids name the same thing here; the grade beside it says which
+// of the two actually ran.
 export const SOURCE_LABEL = {
   smart_import: 'Recipe URL',
   quick_import: 'Recipe URL',
@@ -44,6 +36,13 @@ export const SOURCE_LABEL = {
 };
 
 export const GRADE_LABEL = { trial: 'Pro trial', free: 'Free', pro: 'Pro' };
+
+/** The one place a feature and a membership become the grade a cook felt.
+ * Only a free cook's smart import is the trial; everything else is simply
+ * what their membership buys. */
+export function gradeOf(feature, plan) {
+  return plan === 'free' && feature === 'smart_import' ? 'trial' : plan;
+}
 
 export const GRADE_NOTE = {
   trial: 'A free cook on the good model, saving without the editor',

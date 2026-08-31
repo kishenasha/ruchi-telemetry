@@ -58,9 +58,10 @@ export async function totals(env, days, back = 0) {
 /** Spend and imports per day, oldest first, with empty days filled in so the
  * chart shows a gap as a gap rather than closing it up. */
 export async function daily(env, days) {
-  // The chart keeps its own span. A single bar for "today" says nothing, and
-  // the shape of the fortnight behind it is the point of looking.
-  const span = days === null ? 90 : Math.max(days, 14);
+  // Exactly the window that is selected, so the chart and the cards can never
+  // be describing different stretches of time. All time is capped at what a
+  // row of bars can still be read at.
+  const span = days === null ? 90 : days;
   const { results } = await scoped(
     env, `day, ${SUMS}`, 'GROUP BY day ORDER BY day', bounds(span),
   ).all();
@@ -70,6 +71,65 @@ export async function daily(env, days) {
     const day = dayAgo(span - 1 - i);
     return found.get(day) ?? { day, calls: 0, micros: 0, priced: 0, errors: 0 };
   });
+}
+
+/** Split by the grade a cook actually experienced, which needs the feature
+ * and the membership together: smart_import alone is two different things
+ * depending on who ran it. */
+export async function grades(env, days) {
+  const { results } = await scoped(
+    env,
+    `feature_id, plan, ${SUMS}, MAX(last_seen) AS seen`,
+    'GROUP BY feature_id, plan ORDER BY micros DESC, calls DESC',
+    bounds(days),
+  ).all();
+  return results ?? [];
+}
+
+/** Why calls failed, by day-window. Aggregate only: this table holds no
+ * identity, so there is no per-person version of this question to ask. */
+export async function failures(env, days) {
+  const window = bounds(days);
+  const where = window ? 'WHERE day >= ? AND day <= ?' : '';
+  const binds = window ? [window.from, window.to] : [];
+  const { results } = await env.DB.prepare(`
+    SELECT error_class AS name, feature_id, plan,
+           SUM(count) AS calls, MAX(last_seen) AS seen
+    FROM errors_daily ${where}
+    GROUP BY error_class, feature_id, plan
+    ORDER BY calls DESC LIMIT 50
+  `).bind(...binds).all();
+  return results ?? [];
+}
+
+/**
+ * How many free cooks have spent their trial, and how many of those went on
+ * to Pro. Always lifetime, never the chosen window: the trial is counted for
+ * the life of the install, so a 30 day view of it would be a different and
+ * meaningless number.
+ */
+export async function trial(env, limit) {
+  const row = await env.DB.prepare(`
+    WITH spent AS (
+      SELECT user_hash FROM usage_daily
+      WHERE feature_id = 'smart_import' AND plan = 'free'
+      GROUP BY user_hash HAVING SUM(request_count) >= ?
+    )
+    SELECT
+      (SELECT COUNT(*) FROM spent) AS spent,
+      (SELECT COUNT(*) FROM spent WHERE user_hash IN
+        (SELECT user_hash FROM usage_daily WHERE plan = 'pro')) AS converted
+  `).bind(limit).first();
+  return row ?? { spent: 0, converted: 0 };
+}
+
+/** One cook's lifetime trial usage, for the tag on their own page. */
+export async function trialUsed(env, hash) {
+  const row = await env.DB.prepare(`
+    SELECT COALESCE(SUM(request_count), 0) AS used FROM usage_daily
+    WHERE user_hash = ? AND feature_id = 'smart_import' AND plan = 'free'
+  `).bind(hash).first();
+  return row?.used ?? 0;
 }
 
 export async function breakdown(env, days, column) {

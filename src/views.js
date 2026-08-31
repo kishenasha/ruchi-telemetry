@@ -11,14 +11,17 @@ import {
   pricedNote, rangeLabel, shell, stat, state, when, windowFrom, windowPicker,
 } from './page.js';
 import {
-  FEATURE_LABEL, GRADE_LABEL, GRADE_NOTE, PERIODS, PERIOD_LABEL, SOURCE_LABEL,
-  readLimits, readModels,
+  GRADE_LABEL, GRADE_NOTE, PERIODS, PERIOD_LABEL, SOURCE_LABEL,
+  gradeOf, readLimits, readModels,
 } from './settings.js';
 
 const PER_PAGE = 50;
 
-function featureName(id) {
-  return `<strong>${esc(FEATURE_LABEL[id] ?? id)}</strong>`;
+// A row's own grade, named the way the app names it to a cook.
+function gradeCell(row) {
+  const grade = gradeOf(row.feature_id, row.plan);
+  return `${gradeTag(grade, GRADE_LABEL[grade])}
+    <span class="dim src">${esc(SOURCE_LABEL[row.feature_id] ?? row.feature_id)}</span>`;
 }
 
 function head(title, lede, chosen = null, right = '') {
@@ -33,35 +36,22 @@ function head(title, lede, chosen = null, right = '') {
 
 export async function overview(url, env) {
   const chosen = windowFrom(url);
-  const [now, before, series, features, plans, top] = await Promise.all([
+  const limits = await readLimits(env);
+  const trialLimit = limits.find((l) => l.grade === 'trial')?.max ?? 5;
+
+  const [now, before, series, grades, failed, trial, top] = await Promise.all([
     db.totals(env, chosen.days),
     chosen.days === null ? null : db.totals(env, chosen.days, 1),
     db.daily(env, chosen.days),
-    db.breakdown(env, chosen.days, 'feature_id'),
-    db.breakdown(env, chosen.days, 'plan'),
+    db.grades(env, chosen.days),
+    db.failures(env, chosen.days),
+    db.trial(env, trialLimit),
     db.cooks(env, { days: chosen.days, perPage: 5 }),
   ]);
 
   const worked = (now.calls || 0) - (now.errors || 0);
   const perCall = now.calls ? money(Math.round((now.micros || 0) / now.calls)) : null;
-
-  // The projection is the number that actually decides anything: a month total
-  // in the past does not say whether the next one is affordable.
-  const span = chosen.days;
-  const projection = span && span > 1 && now.micros
-    ? `<p class="lede">Running at ${money(Math.round(now.micros / span))} a day, which is about
-       ${money(Math.round((now.micros / span) * 30))} a month at this rate.</p>`
-    : '';
-
-  // Until there is more than one day of it, every window covers the same day
-  // and every card reads the same, which looks like a switch that does
-  // nothing. Says so rather than leaving it to be worked out. Disappears on
-  // its own the day a second day of data exists.
-  const used = series.filter((d) => d.calls > 0);
-  const oneDay = now.calls && used.length === 1
-    ? `<p class="lede">Every import so far landed on ${esc(used[0].day)}, so each window
-       is reporting that one day. They will differ once there is more than a day of it.</p>`
-    : '';
+  const rate = trial.spent ? Math.round((trial.converted / trial.spent) * 100) : null;
 
   const stats = [
     stat('Spend', money(now.micros), {
@@ -79,41 +69,46 @@ export async function overview(url, env) {
       sub: now.calls ? `${Math.round(((now.errors || 0) / now.calls) * 100)}% of imports` : 'none yet',
       now: now.errors, before: before?.errors, invert: true,
     }),
+    // Lifetime, never the window: the trial is counted for the life of an
+    // install, so it is the one number here a date range would make wrong.
+    stat('Trial spent', count(trial.spent), {
+      sub: trial.spent ? `${count(trial.converted)} went Pro, ${rate}%` : 'nobody yet',
+    }),
   ].join('');
 
   const body = `
 ${head('Overview', 'What imports are costing.', chosen, windowPicker(url, chosen))}
 <div class="stats">${stats}</div>
-${projection}${oneDay}
 
 <h2>Day by day</h2>
 ${chart(series)}
 
 <h2>Where it went</h2>
-<div class="split">
-  ${panel('By import type', '', `<table>
-    <thead><tr><th>Type</th><th class="num">Imports</th><th class="num">Spend</th><th class="num">Failed</th></tr></thead>
-    <tbody>${features.length
-      ? features.map((r) => `<tr>
-          <td>${featureName(r.name)}</td>
-          <td class="num">${count(r.calls)}</td>
-          <td class="num">${money(r.micros)}${pricedNote(r)}</td>
-          <td class="num">${failures(r)}</td>
-        </tr>`).join('')
-      : empty('Nothing in this period.', 4)}</tbody>
-  </table>`)}
-  ${panel('By membership', '', `<table>
-    <thead><tr><th>Membership</th><th class="num">Imports</th><th class="num">Spend</th><th class="num">Failed</th></tr></thead>
-    <tbody>${plans.length
-      ? plans.map((r) => `<tr>
-          <td>${planTag(r.name)}</td>
-          <td class="num">${count(r.calls)}</td>
-          <td class="num">${money(r.micros)}${pricedNote(r)}</td>
-          <td class="num">${failures(r)}</td>
-        </tr>`).join('')
-      : empty('Nothing in this period.', 4)}</tbody>
-  </table>`)}
-</div>
+${panel('', '', `<table>
+  <thead><tr><th>Grade</th><th class="num">Imports</th><th class="num">Spend</th><th class="num">Failed</th><th class="when">Last one</th></tr></thead>
+  <tbody>${grades.length
+    ? grades.map((r) => `<tr>
+        <td>${gradeCell(r)}</td>
+        <td class="num">${count(r.calls)}</td>
+        <td class="num">${money(r.micros)}${pricedNote(r)}</td>
+        <td class="num">${failures(r)}</td>
+        <td class="when">${when(r.seen)}</td>
+      </tr>`).join('')
+    : empty('Nothing in this period.', 5)}</tbody>
+</table>`)}
+
+<h2>Why imports failed</h2>
+${panel('', '', `<table>
+  <thead><tr><th>Reason</th><th>Grade</th><th class="num">Times</th><th class="when">Last one</th></tr></thead>
+  <tbody>${failed.length
+    ? failed.map((r) => `<tr>
+        <td><code>${esc(r.name)}</code></td>
+        <td>${gradeCell(r)}</td>
+        <td class="num">${count(r.calls)}</td>
+        <td class="when">${when(r.seen)}</td>
+      </tr>`).join('')
+    : empty('Nothing has failed in this period.', 4)}</tbody>
+</table>`)}
 
 <h2>Spending the most</h2>
 ${panel('', '', `<table>
@@ -202,16 +197,18 @@ ${panel('', '', `<table>
   <span>${rows.length ? `${count(page * PER_PAGE + 1)} to ${count(page * PER_PAGE + rows.length)}` : ''}</span>
   <a class="${more ? '' : 'off'}" href="${link({ p: page + 1 })}">Next</a>
 </div>
-<p class="lede" style="margin-top:14px">
-  Names are made up from a one way code. There is no way back to a person from here.
-</p>
 `;
   return shell('/cooks', body);
 }
 
 export async function oneCook(url, env, hash) {
   const chosen = windowFrom(url);
-  const { totals, features, days } = await db.cook(env, hash, chosen.days);
+  const limits = await readLimits(env);
+  const trialLimit = limits.find((l) => l.grade === 'trial')?.max ?? 5;
+  const [{ totals, features, days }, used] = await Promise.all([
+    db.cook(env, hash, chosen.days),
+    db.trialUsed(env, hash),
+  ]);
 
   const perCall = totals.calls ? money(Math.round((totals.micros || 0) / totals.calls)) : null;
   const stats = [
@@ -227,22 +224,23 @@ export async function oneCook(url, env, hash) {
 
   const body = `
 <p><a class="back" href="/cooks?w=${esc(chosen.key)}">&larr; All cooks</a></p>
-${head(nickname(hash), 'One cook, by import type and by day.', chosen, windowPicker(url, chosen))}
+${head(nickname(hash), used >= trialLimit
+    ? `Trial spent, all ${trialLimit} used.`
+    : `Trial part used, ${used} of ${trialLimit}.`, chosen, windowPicker(url, chosen))}
 <div class="stats">${stats}</div>
 
 <h2>What they imported</h2>
 ${panel('', '', `<table>
-  <thead><tr><th>Type</th><th>Plan</th><th class="num">Imports</th><th class="num">Spend</th><th class="num">Failed</th><th class="when">Last one</th></tr></thead>
+  <thead><tr><th>Grade</th><th class="num">Imports</th><th class="num">Spend</th><th class="num">Failed</th><th class="when">Last one</th></tr></thead>
   <tbody>${features.length
     ? features.map((r) => `<tr>
-        <td>${featureName(r.name)}</td>
-        <td>${planTag(r.plan)}</td>
+        <td>${gradeCell({ feature_id: r.name, plan: r.plan })}</td>
         <td class="num">${count(r.calls)}</td>
         <td class="num">${money(r.micros)}${pricedNote(r)}</td>
         <td class="num">${failures(r)}</td>
         <td class="when">${when(r.seen)}</td>
       </tr>`).join('')
-    : empty('Nothing in this period.', 6)}</tbody>
+    : empty('Nothing in this period.', 5)}</tbody>
 </table>`)}
 
 <h2>Day by day</h2>
@@ -278,9 +276,9 @@ export async function settings(env, failure = null) {
           <input type="text" name="model" value="${esc(m.model)}" class="wide"
                  pattern="[a-z0-9][a-z0-9._\\-]*/[a-z0-9][a-z0-9._:\\-]*" required>
           <button type="submit">Save</button>
+          ${state(m)}
         </form>
       </td>
-      <td>${state(m)}</td>
     </tr>`).join('');
 
   const limitRows = limits.map((l) => `
@@ -296,9 +294,9 @@ export async function settings(env, failure = null) {
             ${PERIODS.map((p) => `<option value="${p}"${p === l.period ? ' selected' : ''}>${PERIOD_LABEL[p]}</option>`).join('')}
           </select>
           <button type="submit">Save</button>
+          ${state(l)}
         </form>
       </td>
-      <td>${state(l)}</td>
     </tr>`).join('');
 
   const body = `
@@ -306,12 +304,12 @@ ${head('Settings', 'Changes reach the servers within seconds. No app release, no
 ${failure ? `<p class="warn">That change was refused: ${esc(failure)}.</p>` : ''}
 
 ${panel('Which model each membership uses', 'This is the whole difference between Free and Pro.', `<table>
-  <thead><tr><th>Membership</th><th>What it does</th><th>Model</th><th>State</th></tr></thead>
+  <thead><tr><th>Membership</th><th>What it does</th><th>Model</th></tr></thead>
   <tbody>${modelRows}</tbody>
 </table>`)}
 
 ${panel('How many imports each grade gets', 'Per grade, never per person. Zero turns that combination off.', `<table>
-  <thead><tr><th>Import</th><th>Grade</th><th>Allowance</th><th>State</th></tr></thead>
+  <thead><tr><th>Import</th><th>Grade</th><th>Allowance</th></tr></thead>
   <tbody>${limitRows}</tbody>
 </table>`)}
 `;

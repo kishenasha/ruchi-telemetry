@@ -80,10 +80,12 @@ export function failures(row) {
   return `<span class="warn">${count(row.errors)} of ${count(row.calls)}</span>`;
 }
 
-// Whether what is shown is actually what the services are enforcing.
+// Silent when the value is the one the services are enforcing, which is
+// almost always. A row that says nothing here is a row that is fine.
 export function state(row) {
-  if (!row.custom) return '<span class="dim">shipped default</span>';
-  return row.applied ? '<span class="live">live</span>' : '<span class="warn">not applied</span>';
+  return row.custom && !row.applied
+    ? '<span class="warn note">not applied, the servers still have the old value</span>'
+    : '';
 }
 
 export const WINDOWS = [
@@ -220,10 +222,6 @@ export function shell(here, body) {
   </div>
 </header>
 <main class="wrap">${body}</main>
-<footer class="wrap foot">
-  Times are UTC. Spend is what the provider reported; a call it never priced is
-  counted but adds nothing to a total.
-</footer>
 `;
 }
 
@@ -374,7 +372,9 @@ const STYLE = `
   .back { font-size: 13px; color: var(--muted); text-decoration: none; }
   .back:hover { color: var(--ink); }
 
-  .foot { padding: 26px 20px 44px; font-size: 12.5px; color: var(--muted); }
+  .src { font-size: 12px; margin-left: 8px; }
+  code { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12.5px; }
+  main { padding-bottom: 56px; }
   @media (max-width: 720px) {
     .split { grid-template-columns: 1fr; }
     .split .panel + .panel { margin-top: 12px; }
