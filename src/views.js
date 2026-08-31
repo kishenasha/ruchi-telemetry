@@ -7,12 +7,12 @@
 
 import * as db from './queries.js';
 import {
-  chart, count, empty, esc, failures, gradeTag, money, nickname, panel, planTag,
+  chart, count, empty, esc, failures, gradeTag, money, nickname, panel,
   pricedNote, rangeLabel, shell, stat, state, when, windowFrom, windowPicker,
 } from './page.js';
 import {
-  PERIODS, PERIOD_LABEL, PLAN_LABEL, PLAN_NOTE, SOURCES, SOURCE_LABEL, SOURCE_OF,
-  planOf, readLimits, readModels,
+  BURST, MIN_BURST, PERIODS, PERIOD_LABEL, PLAN_LABEL, PLAN_NOTE, SOURCES,
+  SOURCE_LABEL, SOURCE_OF, currentPlan, planOf, readBurst, readLimits, readModels,
 } from './settings.js';
 
 const PER_PAGE = 50;
@@ -118,7 +118,7 @@ ${panel('', '', `<table>
   <tbody>${top.rows.length
     ? top.rows.map((r) => `<tr>
         <td><a class="who" href="/cooks?id=${esc(r.name)}&amp;w=${esc(chosen.key)}">${esc(nickname(r.name))}</a></td>
-        <td>${planTag(r.plan)}</td>
+        <td>${gradeTag(currentPlan(r), PLAN_LABEL[currentPlan(r)])}</td>
         <td class="num">${count(r.calls)}</td>
         <td class="num">${money(r.micros)}${pricedNote(r)}</td>
         <td class="when">${when(r.seen)}</td>
@@ -208,13 +208,7 @@ ${panel('', '', `<table>
  */
 function cookRows(cook, chosen) {
   const tiers = cook.tiers ?? [];
-  const seenPlans = [];
-  for (const tier of tiers) {
-    const plan = planOf(tier.feature_id, tier.plan);
-    if (!seenPlans.includes(plan)) seenPlans.push(plan);
-  }
-  // tiers arrive newest first, so the first plan named is the current one.
-  const current = seenPlans[0] ?? 'free';
+  const current = currentPlan(cook);
   const spent = (plan) => plan !== current && (plan === 'trial' || plan === 'pro');
 
   const history = tiers.map((tier) => {
@@ -347,7 +341,9 @@ ${panel('', 'Not required to review a name above. A bonus when it exists, never 
 // -- settings ---------------------------------------------------------------
 
 export async function settings(env, failure = null) {
-  const [limits, models] = await Promise.all([readLimits(env), readModels(env)]);
+  const [limits, models, burst] = await Promise.all([
+    readLimits(env), readModels(env), readBurst(env),
+  ]);
 
   // Grouped by source: a cook picks where a recipe comes from, and only then
   // does the membership matter. The first row of each group carries the name.
@@ -355,9 +351,7 @@ export async function settings(env, failure = null) {
     const mine = rows.filter((r) => r.source === s.source);
     return mine.map((row, i) => `
       <tr${i === 0 && s.source !== SOURCES[0].source ? ' class="group"' : ''}>
-        <td>${i === 0
-    ? `<strong>${esc(s.label)}</strong>${s.built === false ? ' <span class="soon">not built yet</span>' : ''}`
-    : ''}</td>
+        <td>${i === 0 ? `<strong>${esc(s.label)}</strong>` : ''}</td>
         ${render(row)}
       </tr>`).join('');
   }).join('');
@@ -402,6 +396,22 @@ ${panel('Which model each import runs on', "Pro trial has no row of its own: it 
 ${panel('How many imports each membership gets', 'Per membership, never per person. Zero turns that combination off.', `<table>
   <thead><tr><th>Import</th><th>Membership</th><th>Allowance</th></tr></thead>
   <tbody>${limitRows}</tbody>
+</table>`)}
+
+${panel('How many imports in a row', "A brake on one cook hammering the button, not a membership allowance: everybody gets the same number, whichever import they are running. This is the one setting that refuses when it cannot be checked, so it will not go below " + MIN_BURST + '.', `<table>
+  <thead><tr><th>What</th><th>Window</th><th>Allowance</th></tr></thead>
+  <tbody><tr>
+    <td><strong>Any import</strong></td>
+    <td class="dim">${esc(BURST.windowLabel)}</td>
+    <td>
+      <form method="post" class="set">
+        <input type="hidden" name="burst" value="1">
+        <input type="number" name="max" value="${burst.max}" min="${MIN_BURST}" max="1000" required>
+        <button type="submit">Save</button>
+        ${state(burst)}
+      </form>
+    </td>
+  </tr></tbody>
 </table>`)}
 `;
   return shell('/settings', body);

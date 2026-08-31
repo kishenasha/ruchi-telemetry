@@ -15,20 +15,20 @@
 // each and split on plan alone.
 export const SOURCES = [
   { source: 'url', label: 'Recipe URL' },
-  { source: 'text', label: 'Pasted text', built: false },
-  { source: 'image', label: 'Photo', built: false },
+  { source: 'text', label: 'Pasted text' },
+  { source: 'image', label: 'Photo' },
 ];
 
 export const TIERS = [
   { source: 'url', feature: 'smart_import', plan: 'trial', max: 5, period: 'life' },
   { source: 'url', feature: 'quick_import', plan: 'free', max: 10, period: 'month' },
   { source: 'url', feature: 'smart_import', plan: 'pro', max: 6000, period: 'month' },
-  { source: 'text', feature: 'text_import', plan: 'trial', max: 5, period: 'life', built: false },
-  { source: 'text', feature: 'text_import', plan: 'free', max: 5, period: 'month', built: false },
-  { source: 'text', feature: 'text_import', plan: 'pro', max: 6000, period: 'month', built: false },
-  { source: 'image', feature: 'image_import', plan: 'trial', max: 3, period: 'life', built: false },
-  { source: 'image', feature: 'image_import', plan: 'free', max: 3, period: 'month', built: false },
-  { source: 'image', feature: 'image_import', plan: 'pro', max: 6000, period: 'month', built: false },
+  { source: 'text', feature: 'text_import', plan: 'trial', max: 5, period: 'life' },
+  { source: 'text', feature: 'text_import', plan: 'free', max: 5, period: 'month' },
+  { source: 'text', feature: 'text_import', plan: 'pro', max: 6000, period: 'month' },
+  { source: 'image', feature: 'image_import', plan: 'trial', max: 3, period: 'life' },
+  { source: 'image', feature: 'image_import', plan: 'free', max: 3, period: 'month' },
+  { source: 'image', feature: 'image_import', plan: 'pro', max: 6000, period: 'month' },
 ];
 
 // Kept in step with server/lib/models.py's DEFAULT_MODELS by hand. Two rows
@@ -37,10 +37,10 @@ export const TIERS = [
 export const MODELS = [
   { source: 'url', feature: 'quick_import', plan: 'free', model: 'google/gemini-2.5-flash-lite' },
   { source: 'url', feature: 'smart_import', plan: 'pro', model: 'openai/gpt-5.6-luna' },
-  { source: 'text', feature: 'text_import', plan: 'free', model: 'google/gemini-2.5-flash-lite', built: false },
-  { source: 'text', feature: 'text_import', plan: 'pro', model: 'openai/gpt-5.6-luna', built: false },
-  { source: 'image', feature: 'image_import', plan: 'free', model: 'google/gemini-2.5-flash-lite', built: false },
-  { source: 'image', feature: 'image_import', plan: 'pro', model: 'openai/gpt-5.6-luna', built: false },
+  { source: 'text', feature: 'text_import', plan: 'free', model: 'google/gemini-2.5-flash-lite' },
+  { source: 'text', feature: 'text_import', plan: 'pro', model: 'openai/gpt-5.6-luna' },
+  { source: 'image', feature: 'image_import', plan: 'free', model: 'google/gemini-2.5-flash-lite' },
+  { source: 'image', feature: 'image_import', plan: 'pro', model: 'openai/gpt-5.6-luna' },
 ];
 
 // The one vocabulary for a membership, used everywhere a plan is shown.
@@ -67,6 +67,30 @@ export function planOf(featureId, plan) {
   return plan;
 }
 
+/**
+ * Which membership a cook is on now, read off their most recent usage rather
+ * than stored: a cook who upgraded has Pro rows newer than their trial ones.
+ *
+ * Shared because a cook row carries no plan column of its own, only the tiers
+ * nested inside it. Overview and Cooks each derived this once and one of them
+ * was missed, which is how the plan came out as "unknown".
+ */
+export function currentPlan(cook) {
+  // tiers arrive newest first, so the first membership named is the current one.
+  const tier = (cook?.tiers ?? [])[0];
+  return tier ? planOf(tier.feature_id, tier.plan) : 'free';
+}
+
+/** Every membership a cook has been on, newest first, each named once. */
+export function planHistory(cook) {
+  const seen = [];
+  for (const tier of cook?.tiers ?? []) {
+    const plan = planOf(tier.feature_id, tier.plan);
+    if (!seen.includes(plan)) seen.push(plan);
+  }
+  return seen;
+}
+
 export const MODEL_ID = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/;
 
 export const PERIODS = ['day', 'month', 'year', 'life'];
@@ -84,6 +108,36 @@ export async function readModels(env) {
       ? { ...tier, model: row.model, applied: row.applied === 1, updatedAt: row.updated_at, custom: true }
       : { ...tier, applied: true, updatedAt: null, custom: false };
   });
+}
+
+/**
+ * How many imports one cook may run in a row before the brake comes on.
+ *
+ * One number for every import, not one per source: a loop is a loop whether
+ * it is firing URLs or photographs. The window it counts over lives in the
+ * server and is not settable, so it is named here only to be shown.
+ *
+ * Stored in `limits` under a reserved feature id rather than in a table of
+ * its own. It is not a membership allowance and never appears among them:
+ * readLimits() maps over TIERS, which this is deliberately not in.
+ */
+export const BURST = {
+  feature: 'burst', plan: 'all', key: 'limit:burst', max: 5, windowLabel: 'in 10 minutes',
+};
+
+// ruchi-ai floors whatever it reads, since the brake fails closed and a zero
+// would refuse every import for everyone. The form refuses it first, so the
+// number shown is always the number enforced.
+export const MIN_BURST = 3;
+
+export async function readBurst(env) {
+  const row = await env.DB.prepare('SELECT * FROM limits WHERE feature_id = ? AND plan = ?')
+    .bind(BURST.feature, BURST.plan).first();
+  return row
+    ? {
+      ...BURST, max: row.max_calls, applied: row.applied === 1, updatedAt: row.updated_at, custom: true,
+    }
+    : { ...BURST, applied: true, updatedAt: null, custom: false };
 }
 
 export async function readLimits(env) {
@@ -164,8 +218,29 @@ async function saveLimit(env, form) {
   return null;
 }
 
-/** Both settings share this endpoint: validate, push to Upstash, record whether
- * it landed. Returns a failure string, or null when saved. */
+async function saveBurst(env, form) {
+  const max = Number(form.get('max'));
+  // Refused rather than quietly raised: a number the server would floor is a
+  // number the page would then be showing wrongly.
+  if (!Number.isInteger(max) || max < MIN_BURST || max > 1000) {
+    return `imports in a row has to be between ${MIN_BURST} and 1000`;
+  }
+
+  const applied = await push(env, BURST.key, String(max));
+  await env.DB.prepare(`
+    INSERT INTO limits (feature_id, plan, max_calls, period, applied, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT (feature_id, plan) DO UPDATE SET
+      max_calls = excluded.max_calls,
+      applied = excluded.applied,
+      updated_at = excluded.updated_at
+  `).bind(BURST.feature, BURST.plan, max, 'burst', applied ? 1 : 0, new Date().toISOString()).run();
+  return null;
+}
+
+/** Every setting shares this endpoint: validate, push to Upstash, record
+ * whether it landed. Returns a failure string, or null when saved. */
 export async function saveSetting(env, form) {
-  return form.get('model') !== null ? saveModel(env, form) : saveLimit(env, form);
+  if (form.get('model') !== null) return saveModel(env, form);
+  return form.get('burst') !== null ? saveBurst(env, form) : saveLimit(env, form);
 }

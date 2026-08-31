@@ -61,11 +61,6 @@ export function gradeTag(grade, label) {
   return `<span class="tag${GRADE_CLASS[grade] ?? ''}">${esc(label)}</span>`;
 }
 
-export function planTag(plan) {
-  const label = plan === 'pro' ? 'Pro' : plan === 'free' ? 'Free' : (plan || 'unknown');
-  return `<span class="tag${plan === 'pro' ? ' tag--pro' : ''}">${esc(label)}</span>`;
-}
-
 // Spend is only as complete as the provider's own cost reporting, so a row
 // holding calls whose cost never came back says so rather than implying the
 // total is the whole story.
