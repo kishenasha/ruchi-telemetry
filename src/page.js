@@ -184,6 +184,7 @@ export function empty(text, span) {
 const NAV = [
   { href: '/', label: 'Overview' },
   { href: '/cooks', label: 'Cooks' },
+  { href: '/ingredients', label: 'Ingredients' },
   { href: '/settings', label: 'Settings' },
 ];
 

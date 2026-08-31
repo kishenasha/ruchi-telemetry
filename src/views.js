@@ -259,6 +259,49 @@ ${panel('', '', `<table>
   return shell('/cooks', body);
 }
 
+// -- ingredients --------------------------------------------------------
+
+export async function ingredients(env) {
+  const [unresolved, corrections] = await Promise.all([
+    db.unresolvedIngredients(env),
+    db.ingredientCorrections(env),
+  ]);
+
+  const correctedFor = new Set(corrections.map((r) => r.ingredient));
+
+  const body = `
+${head('Ingredients', 'What the dictionary could not place. Lifetime, not windowed: a name earns review by count, not by date.')}
+
+<h2>Unresolved, by how often</h2>
+${panel('', '', `<table>
+  <thead><tr><th>Name</th><th class="num">Times</th><th>Corpus versions</th><th class="when">Last seen</th></tr></thead>
+  <tbody>${unresolved.length
+    ? unresolved.map((r) => `<tr>
+        <td><code>${esc(r.ingredient)}</code>${correctedFor.has(r.ingredient) ? ' <span class="soon">has a correction below</span>' : ''}</td>
+        <td class="num">${count(r.total)}</td>
+        <td class="dim">${esc(r.versions)}</td>
+        <td class="when">${when(r.seen)}</td>
+      </tr>`).join('')
+    : empty('Nothing unresolved yet.', 4)}</tbody>
+</table>`)}
+
+<h2>Corrections, a free answer when a cook gives one</h2>
+${panel('', 'Not required to review a name above. A bonus when it exists, never a dependency.', `<table>
+  <thead><tr><th>Typed as</th><th></th><th>Corrected to</th><th class="num">Times</th><th class="when">Last seen</th></tr></thead>
+  <tbody>${corrections.length
+    ? corrections.map((r) => `<tr>
+        <td><code>${esc(r.ingredient)}</code></td>
+        <td class="dim">&rarr;</td>
+        <td><strong>${esc(r.corrected_to)}</strong></td>
+        <td class="num">${count(r.total)}</td>
+        <td class="when">${when(r.seen)}</td>
+      </tr>`).join('')
+    : empty('No corrections yet.', 5)}</tbody>
+</table>`)}
+`;
+  return shell('/ingredients', body);
+}
+
 // -- settings ---------------------------------------------------------------
 
 export async function settings(env, failure = null) {

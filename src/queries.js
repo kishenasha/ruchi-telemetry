@@ -190,3 +190,33 @@ export async function cook(env, hash, days) {
     days: days_.results ?? [],
   };
 }
+
+
+// -- ingredient feedback ------------------------------------------------
+//
+// Both lifetime, never windowed: this is a maintenance queue, not a daily
+// metric. A name worth reviewing is worth reviewing regardless of whether it
+// happened this week or three months ago.
+
+export async function unresolvedIngredients(env, limit = 100) {
+  const { results } = await env.DB.prepare(`
+    SELECT ingredient, SUM(count) AS total, MAX(corpus_version) AS latest_version,
+           GROUP_CONCAT(DISTINCT corpus_version) AS versions, MAX(last_seen) AS seen
+    FROM ingredient_unresolved_daily
+    GROUP BY ingredient
+    ORDER BY total DESC, seen DESC
+    LIMIT ?
+  `).bind(limit).all();
+  return results ?? [];
+}
+
+export async function ingredientCorrections(env, limit = 100) {
+  const { results } = await env.DB.prepare(`
+    SELECT ingredient, corrected_to, SUM(count) AS total, MAX(last_seen) AS seen
+    FROM ingredient_correction_daily
+    GROUP BY ingredient, corrected_to
+    ORDER BY total DESC, seen DESC
+    LIMIT ?
+  `).bind(limit).all();
+  return results ?? [];
+}

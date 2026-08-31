@@ -23,6 +23,14 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 // message or a fragment of a page can never arrive by being added upstream.
 const ERROR_CLASS = /^[A-Za-z][A-Za-z0-9_]{0,63}(:\d{1,3})?$/;
 
+// The four import ids a corpus feedback report can come from. Never
+// "manual": a hand typed name is never marked unresolved in the first place.
+const FEEDBACK_SOURCE = /^(smart_import|quick_import|text_import|image_import)$/;
+// A normalized ingredient name, the same shape the app's own matcher keys on.
+// Bounded short: nothing legitimate here is a sentence.
+const INGREDIENT_NAME = /^.{1,80}$/;
+const MAX_FEEDBACK_ITEMS = 20;
+
 export { nickname } from './page.js';
 export { MODEL_ID } from './settings.js';
 
@@ -38,6 +46,11 @@ export default {
       return ingest(request, env);
     }
 
+    if (url.pathname === '/ingredient-feedback') {
+      if (request.method !== 'POST') return json({ error: 'method' }, 405);
+      return ingredientFeedback(request, env);
+    }
+
     const denied = requireDashboardAuth(request, env);
     if (denied) return denied;
 
@@ -51,6 +64,8 @@ export default {
       }
       return html(await views.cooks(url, env));
     }
+
+    if (url.pathname === '/ingredients') return html(await views.ingredients(env));
 
     if (url.pathname === '/settings') {
       if (request.method !== 'POST') return html(await views.settings(env));
@@ -118,6 +133,90 @@ async function ingest(request, env) {
   }
 
   return json({ ok: true });
+}
+
+// -- ingredient feedback ------------------------------------------------
+
+// Every ruchi-ai forwards after its own bounds and rate limiting; this is
+// the second check, not the only one. Deliberately holds no identity of any
+// kind, matching plan/14 section 14.4: an occurrence needs no correction to
+// be worth reviewing, and neither table can ever be traced to who sent it.
+async function ingredientFeedback(request, env) {
+  if (!env.INGEST_SECRET) return json({ error: 'not configured' }, 503);
+  const offered = (request.headers.get('authorization') || '').replace(/^Bearer /, '');
+  if (!sameSecret(offered, env.INGEST_SECRET)) return json({ error: 'unauthorized' }, 401);
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'bad json' }, 400);
+  }
+  if (!body || typeof body !== 'object') return json({ error: 'bad body' }, 400);
+
+  const corpusVersion = body.corpus_version;
+  const source = body.source;
+  if (!Number.isInteger(corpusVersion) || corpusVersion < 1) return json({ error: 'bad body' }, 400);
+  if (!FEEDBACK_SOURCE.test(source || '')) return json({ error: 'bad body' }, 400);
+
+  const unresolved = validNames(body.unresolved);
+  const corrections = validCorrections(body.corrections);
+  if (!unresolved.length && !corrections.length) return json({ ok: true, stored: 0 });
+
+  const now = new Date().toISOString();
+  const day = now.slice(0, 10);
+
+  for (const ingredient of unresolved) {
+    await env.DB.prepare(`
+      INSERT INTO ingredient_unresolved_daily
+        (day, ingredient, corpus_version, source, count, first_seen, last_seen)
+      VALUES (?, ?, ?, ?, 1, ?, ?)
+      ON CONFLICT (day, ingredient, corpus_version, source) DO UPDATE SET
+        count = count + 1, last_seen = excluded.last_seen
+    `).bind(day, ingredient, corpusVersion, source, now, now).run();
+  }
+
+  for (const { from, to } of corrections) {
+    await env.DB.prepare(`
+      INSERT INTO ingredient_correction_daily
+        (day, ingredient, corrected_to, corpus_version, count, first_seen, last_seen)
+      VALUES (?, ?, ?, ?, 1, ?, ?)
+      ON CONFLICT (day, ingredient, corrected_to, corpus_version) DO UPDATE SET
+        count = count + 1, last_seen = excluded.last_seen
+    `).bind(day, from, to, corpusVersion, now, now).run();
+  }
+
+  return json({ ok: true, stored: unresolved.length + corrections.length });
+}
+
+// A normalized, deduplicated list of names, capped and filtered rather than
+// trusted: this is the one place free text from a cook's own typing reaches
+// this service, so nothing here assumes the client already behaved.
+export function validNames(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  for (const item of raw) {
+    if (typeof item !== 'string') continue;
+    const name = item.trim().toLowerCase();
+    if (!name || !INGREDIENT_NAME.test(name)) continue;
+    seen.add(name);
+    if (seen.size >= MAX_FEEDBACK_ITEMS) break;
+  }
+  return [...seen];
+}
+
+export function validCorrections(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Map();
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const from = typeof item.from === 'string' ? item.from.trim().toLowerCase() : '';
+    const to = typeof item.to === 'string' ? item.to.trim() : '';
+    if (!from || !to || !INGREDIENT_NAME.test(from) || !INGREDIENT_NAME.test(to)) continue;
+    seen.set(`${from} ${to}`, { from, to });
+    if (seen.size >= MAX_FEEDBACK_ITEMS) break;
+  }
+  return [...seen.values()];
 }
 
 /**
