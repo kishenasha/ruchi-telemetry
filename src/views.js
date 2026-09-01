@@ -11,7 +11,7 @@ import {
   pricedNote, rangeLabel, shell, stat, state, when, windowFrom, windowPicker,
 } from './page.js';
 import {
-  BURST, MIN_BURST, PERIODS, PERIOD_LABEL, PLAN_LABEL, PLAN_NOTE, SOURCES,
+  BURST, MIN_ALLOWANCE, MIN_BURST, PERIODS, PERIOD_LABEL, PLAN_LABEL, PLAN_NOTE, SOURCES,
   SOURCE_LABEL, SOURCE_OF, currentPlan, planOf, readBurst, readLimits, readModels,
 } from './settings.js';
 
@@ -375,11 +375,16 @@ export async function settings(env, failure = null) {
         <form method="post" class="set">
           <input type="hidden" name="feature" value="${esc(l.feature)}">
           <input type="hidden" name="plan" value="${esc(l.plan)}">
-          <input type="number" name="max" value="${l.max}" min="0" max="1000000" required>
+          <label class="onoff">
+            <input type="checkbox" name="enabled"${l.enabled ? ' checked' : ''}>
+            <span>on</span>
+          </label>
+          <input type="number" name="max" value="${l.max}" min="${MIN_ALLOWANCE}" max="1000000" required>
           <select name="period">
             ${PERIODS.map((p) => `<option value="${p}"${p === l.period ? ' selected' : ''}>${PERIOD_LABEL[p]}</option>`).join('')}
           </select>
           <button type="submit">Save</button>
+          ${l.enabled ? '' : '<span class="off">off</span>'}
           ${state(l)}
         </form>
       </td>`);
@@ -393,7 +398,7 @@ ${panel('Which model each import runs on', "Pro trial has no row of its own: it 
   <tbody>${modelRows}</tbody>
 </table>`)}
 
-${panel('How many imports each membership gets', 'Per membership, never per person. Zero turns that combination off.', `<table>
+${panel('How many imports each membership gets', 'Per membership, never per person. Switch one off and nobody on that membership gets that import at all; the number is kept, so it comes back as it was.', `<table>
   <thead><tr><th>Import</th><th>Membership</th><th>Allowance</th></tr></thead>
   <tbody>${limitRows}</tbody>
 </table>`)}

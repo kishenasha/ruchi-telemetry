@@ -371,6 +371,9 @@ const STYLE = `
   .range { color: var(--muted); }
   .range::before { content: '·'; margin: 0 6px; }
   .soon { font-size: 11.5px; color: var(--muted); font-style: italic; margin-left: 6px; }
+  .onoff { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+  .onoff input { margin: 0; }
+  .off { font-size: 12px; color: var(--muted); font-style: italic; margin-left: 6px; }
 
   .filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
   .filters input[type=search] { min-width: 14em; }

@@ -130,6 +130,9 @@ export const BURST = {
 // number shown is always the number enforced.
 export const MIN_BURST = 3;
 
+// The toggle turns a combination off, so the number itself never means "none".
+export const MIN_ALLOWANCE = 1;
+
 export async function readBurst(env) {
   const row = await env.DB.prepare('SELECT * FROM limits WHERE feature_id = ? AND plan = ?')
     .bind(BURST.feature, BURST.plan).first();
@@ -150,11 +153,12 @@ export async function readLimits(env) {
         ...tier,
         max: row.max_calls,
         period: row.period,
+        enabled: row.enabled !== 0,
         applied: row.applied === 1,
         updatedAt: row.updated_at,
         custom: true,
       }
-      : { ...tier, applied: true, updatedAt: null, custom: false };
+      : { ...tier, enabled: true, applied: true, updatedAt: null, custom: false };
   });
 }
 
@@ -197,24 +201,29 @@ async function saveLimit(env, form) {
   const plan = String(form.get('plan') ?? '');
   const period = String(form.get('period') ?? '');
   const max = Number(form.get('max'));
+  // An unchecked box sends nothing at all, which is the whole of "off".
+  const enabled = form.get('enabled') !== null;
 
   const known = TIERS.some((t) => t.feature === feature && t.plan === plan);
+  // At least one while it is on: zero is how a combination is turned off, and
+  // the toggle owns that now, so a zero here would be two ways to say it.
   const valid = known && PERIODS.includes(period)
-    && Number.isInteger(max) && max >= 0 && max <= 1_000_000;
-  if (!valid) return 'bad limit';
+    && Number.isInteger(max) && max >= MIN_ALLOWANCE && max <= 1_000_000;
+  if (!valid) return `an allowance has to be at least ${MIN_ALLOWANCE}`;
 
-  // Pushed first: the stored row records whether enforcement actually has it,
-  // so the page can never show a limit as live when it is not.
-  const applied = await push(env, `limit:${feature}:${plan}`, `${max}:${period}`);
+  // Off is pushed as zero, which is what ruchi-ai already reads as "none of
+  // this for anyone". The real number stays in the row so it survives.
+  const applied = await push(env, `limit:${feature}:${plan}`, `${enabled ? max : 0}:${period}`);
   await env.DB.prepare(`
-    INSERT INTO limits (feature_id, plan, max_calls, period, applied, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO limits (feature_id, plan, max_calls, period, enabled, applied, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (feature_id, plan) DO UPDATE SET
       max_calls = excluded.max_calls,
       period = excluded.period,
+      enabled = excluded.enabled,
       applied = excluded.applied,
       updated_at = excluded.updated_at
-  `).bind(feature, plan, max, period, applied ? 1 : 0, new Date().toISOString()).run();
+  `).bind(feature, plan, max, period, enabled ? 1 : 0, applied ? 1 : 0, new Date().toISOString()).run();
   return null;
 }
 
