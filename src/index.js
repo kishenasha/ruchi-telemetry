@@ -51,7 +51,7 @@ export default {
       return ingredientFeedback(request, env);
     }
 
-    const denied = requireDashboardAuth(request, env);
+    const denied = await requireDashboardAuth(request, env);
     if (denied) return denied;
 
     if (url.pathname === '/') return html(await views.overview(url, env));
@@ -277,14 +277,35 @@ function dayOf(timestamp) {
 
 // -- plumbing ---------------------------------------------------------------
 
-function requireDashboardAuth(request, env) {
+// A browser sends Basic auth on every request for the realm, so a wrong
+// password arrives as fast as the network allows and could be guessed at
+// forever. Five wrong tries from one address buys an hour of refusals.
+const MAX_WRONG_TRIES = 5;
+const LOCKOUT_SECONDS = 60 * 60;
+
+async function requireDashboardAuth(request, env) {
   if (!env.DASHBOARD_PASSWORD) return json({ error: 'not configured' }, 503);
+
+  const who = await attempts.identify(request, env);
+
+  if (await attempts.lockedOut(env, who)) {
+    return new Response('Too many attempts. Try again later.', {
+      status: 429,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', ...NO_STORE },
+    });
+  }
 
   const header = request.headers.get('authorization') || '';
   if (header.startsWith('Basic ')) {
     const decoded = safeAtob(header.slice(6));
     const password = decoded.slice(decoded.indexOf(':') + 1);
-    if (decoded.includes(':') && sameSecret(password, env.DASHBOARD_PASSWORD)) return null;
+    if (decoded.includes(':') && sameSecret(password, env.DASHBOARD_PASSWORD)) {
+      await attempts.forgive(env, who);
+      return null;
+    }
+    // Only a real attempt counts. A first visit carries no header at all and
+    // is answered with the prompt, not held against anyone.
+    await attempts.countWrong(env, who);
   }
 
   return new Response('Authentication required.', {
@@ -295,6 +316,58 @@ function requireDashboardAuth(request, env) {
       'X-Robots-Tag': 'noindex, nofollow',
     },
   });
+}
+
+// Wrong-password counting, in the Upstash the settings page already writes
+// to. Fails open on every path: a counter that cannot be reached must never
+// be the reason the dashboard is unreachable, and the password still stands
+// behind it either way.
+const attempts = {
+  /** A key for one caller, never their address. */
+  async identify(request, env) {
+    const ip = (request.headers.get('cf-connecting-ip') || '').trim();
+    if (!ip || !env.DASHBOARD_PASSWORD) return null;
+    const salted = new TextEncoder().encode(`dash:${ip}:${env.DASHBOARD_PASSWORD}`);
+    const digest = await crypto.subtle.digest('SHA-256', salted);
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  },
+
+  async lockedOut(env, who) {
+    if (!who) return false;
+    const tries = Number(await redis(env, ['GET', `dash:wrong:${who}`]));
+    return Number.isFinite(tries) && tries >= MAX_WRONG_TRIES;
+  },
+
+  async countWrong(env, who) {
+    if (!who) return;
+    const key = `dash:wrong:${who}`;
+    await redis(env, ['INCR', key]);
+    // Refreshed on every wrong try, so a slow grind never outwaits the window.
+    await redis(env, ['EXPIRE', key, String(LOCKOUT_SECONDS)]);
+  },
+
+  async forgive(env, who) {
+    if (who) await redis(env, ['DEL', `dash:wrong:${who}`]);
+  },
+};
+
+async function redis(env, command) {
+  if (!env.UPSTASH_URL || !env.UPSTASH_TOKEN) return null;
+  try {
+    const response = await fetch(`${env.UPSTASH_URL}/pipeline`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.UPSTASH_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify([command]),
+    });
+    if (!response.ok) return null;
+    const body = await response.json();
+    return Array.isArray(body) ? body[0]?.result ?? null : null;
+  } catch {
+    return null;
+  }
 }
 
 function safeAtob(value) {
