@@ -383,7 +383,6 @@ const STYLE = `
   }
   button { cursor: pointer; background: var(--green); color: var(--panel); border-color: var(--green); font-weight: 600; padding: 6px 14px; }
   button:hover { opacity: .9; }
-  /* A panel whose body is not a table has no cell padding to borrow. */
   .pad { padding: 12px 17px 16px; }
   .action + .action { margin-top: 16px; }
   .action .lede { max-width: 62ch; }
@@ -408,17 +407,12 @@ const STYLE = `
     th, td { padding: 9px 10px; }
     .when, th.when { display: none; }
 
-    /* With the date column gone these fit a phone, and spend is the whole
-       point of the page: it must not be the thing off the right edge. */
+    /* With the date column hidden these fit, so spend is not off the edge. */
     table { min-width: 0; }
-    /* Two things on one line is what pushed a column off the edge. Each of
-       these is a footnote to the number above it, so it can sit under it. */
     .src { display: block; margin-left: 0; }
     td.num .note { display: block; }
 
-    /* Four tabs and a brand do not fit a phone on one line, and the page you
-       are on was the one falling off the end. Its own row, scrolling if even
-       that is not enough. */
+    /* A brand and four tabs do not fit one phone line. */
     .top-in { gap: 10px 14px; height: auto; padding: 9px 0 7px; flex-wrap: wrap; }
     .tabs { order: 3; width: 100%; overflow-x: auto; scrollbar-width: none; }
     .tabs::-webkit-scrollbar { display: none; }
@@ -429,9 +423,8 @@ const STYLE = `
     .panel-head { padding: 13px 14px 2px; }
     .pad { padding: 12px 14px 16px; }
 
-    /* A settings row is a form, and a form you have to scroll sideways to
-       reach is a form you cannot use. Every other table here is something to
-       read, so those still scroll; these stack. */
+    /* Settings rows are forms: a control scrolled off the side is unusable.
+       Other tables are for reading and still scroll. */
     table.stack, table.stack tbody, table.stack tr, table.stack td {
       display: block; min-width: 0; width: auto;
     }

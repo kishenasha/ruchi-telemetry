@@ -8,9 +8,7 @@
 
 // Kept in step with lib/quota.py's DEFAULT_LIMITS by hand.
 //
-// Two memberships, one axis. There is no free plan: an install gets Pro for a
-// while and is then asked to pay, so every source has a trial row and a pro row
-// and nothing else. quick_import and free_import went with the free tier.
+// Two memberships: every source has a trial row and a pro row, nothing else.
 export const SOURCES = [
   { source: 'url', label: 'Recipe URL' },
   { source: 'text', label: 'Pasted text' },
@@ -26,9 +24,8 @@ export const TIERS = [
   { source: 'image', feature: 'image_import', plan: 'pro', max: 6000, period: 'month' },
 ];
 
-// Kept in step with server/lib/models.py's DEFAULT_MODELS by hand. A trial has
-// a row of its own even though it ships on the same model: a taste of something
-// lesser demonstrates nothing, but the two should be movable apart.
+// Kept in step with server/lib/models.py's DEFAULT_MODELS by hand. A trial keeps
+// its own row despite shipping on the same model, so the two can be moved apart.
 export const MODELS = [
   { source: 'url', feature: 'smart_import', plan: 'trial', model: 'openai/gpt-5.6-luna' },
   { source: 'url', feature: 'smart_import', plan: 'pro', model: 'openai/gpt-5.6-luna' },
@@ -38,9 +35,7 @@ export const MODELS = [
   { source: 'image', feature: 'image_import', plan: 'pro', model: 'openai/gpt-5.6-luna' },
 ];
 
-// The one vocabulary for a membership, used everywhere a plan is shown. Free is
-// kept for reading back records from before the trial replaced it, and is not a
-// membership anything can be set for any more.
+// Free is kept only for reading back records from before the trial replaced it.
 export const PLAN_LABEL = { trial: 'Trial', free: 'Free', pro: 'Pro' };
 
 export const PLAN_NOTE = {
@@ -57,9 +52,8 @@ export const SOURCE_OF = {
 
 export const SOURCE_LABEL = Object.fromEntries(SOURCES.map((s) => [s.source, s.label]));
 
-/** The membership a usage row represents. Only records from before the trial
- * replaced the free tier need this, when a free cook's first few URL imports
- * were the trial; the server records the plan directly now. */
+/** The membership a usage row represents. Only records predating the trial need
+ * this; the server records the plan directly now. */
 export function planOf(featureId, plan) {
   if (plan === 'free' && featureId === 'smart_import') return 'trial';
   return plan;
@@ -124,17 +118,10 @@ export const BURST = {
 };
 
 /**
- * How long a trial runs, and how long before it ends Ruchi says so.
+ * How long a trial runs, and how long before it ends Ruchi says so. Zero is a
+ * real answer for both: no trial at all, and no warning.
  *
- * Only the start of a trial is stored, so raising the hours lengthens the
- * trials already running rather than only the ones that begin afterwards. That
- * is the point of setting it here: nobody has measured what a trial costs yet.
- *
- * Zero hours is a real answer and means trials are switched off. Zero warning
- * means nothing is said before one ends.
- *
- * Kept in the limits table under reserved feature ids, the same trick BURST
- * uses, rather than earning a table for two numbers.
+ * Kept in the limits table under reserved feature ids, as BURST is.
  */
 export const TRIAL_CLOCK = [
   {
@@ -160,10 +147,8 @@ export async function readTrialClock(env) {
   });
 }
 
-// Everything the old three-membership world wrote and nothing reads now. Left
-// in Upstash they are worse than clutter: a stale limit:smart_import:trial from
-// the days of five-for-life would quietly override the shipped allowance, and
-// nothing on this page would show it.
+// Keys nothing reads now. Left in Upstash a stale one would silently override a
+// shipped default with nothing on this page to show it.
 export const RETIRED = {
   keys: [
     'limit:quick_import:free', 'limit:smart_import:free', 'limit:text_import:free',
@@ -321,8 +306,7 @@ async function saveTrialClock(env, form) {
   const plan = String(form.get('trial') ?? '');
   const dial = TRIAL_CLOCK.find((d) => d.plan === plan);
   const max = Number(form.get('max'));
-  // Zero is allowed here and nowhere else: no trial at all, and no warning
-  // before one ends, are both answers somebody might want.
+  // Zero is allowed here and nowhere else.
   if (!dial || !Number.isInteger(max) || max < 0 || max > dial.max_allowed) {
     return `that has to be a whole number of hours, 0 to ${dial ? dial.max_allowed : 8760}`;
   }
@@ -339,12 +323,8 @@ async function saveTrialClock(env, form) {
   return null;
 }
 
-/**
- * Put every setting back to what ships, and clear what the free tier left
- * behind. Deleting rather than writing defaults, so ruchi-ai reads nothing and
- * falls back to its own shipped values: two places holding the same number is
- * how they drift.
- */
+/** Put every setting back to what ships. Deletes rather than writing defaults,
+ * so ruchi-ai falls back to its own values and one number lives in one place. */
 export async function resetSettings(env) {
   const live = [...TIERS.map((t) => `limit:${t.feature}:${t.plan}`),
     ...MODELS.map((m) => `model:${m.feature}:${m.plan}`),
@@ -356,22 +336,12 @@ export async function resetSettings(env) {
   return cleared ? null : 'the settings store could not be reached, so the servers may still hold the old values';
 }
 
-/**
- * Everything the servers remember about who did what. Not settings: these are
- * records, and starting a test from nothing means starting without them.
- *
- * trial:start is the one that matters most. A trial is keyed to the phone
- * rather than the install, precisely so a reinstall cannot refill it, which
- * also means a spent trial follows a device around until this lets it go.
- */
+/** Everything the servers remember about who did what. trial:start is keyed to
+ * the phone, so a spent trial follows a device around until this clears it. */
 export const RECORD_PREFIXES = [
-  // What each person has used, per feature and membership.
   'use:',
-  // Calls and spend per day, what the charts are drawn from.
   'ai:req:', 'ai:spend:',
-  // The brake on somebody hammering the import button.
   'ratelimit:',
-  // When each phone's taste of Pro began.
   'trial:start:',
 ];
 
@@ -379,8 +349,7 @@ export const RECORD_TABLES = [
   'usage_daily', 'errors_daily', 'ingredient_unresolved_daily', 'ingredient_correction_daily',
 ];
 
-// Upstash pages a scan, and a cursor that never came back to zero would spin
-// forever. Far more rounds than this project will ever need.
+// A cursor that never returns to zero would otherwise spin forever.
 const SCAN_ROUNDS = 200;
 const REMOVE_BATCH = 200;
 
@@ -399,18 +368,11 @@ async function keysUnder(env, prefix) {
   return found;
 }
 
-/**
- * Put the records back to nothing, so the next import is the first one that
- * ever happened. Settings are left alone: this is for testing the product
- * rather than reconfiguring it, and taking both at once is a worse surprise
- * than taking either.
- */
+/** Put the records back to nothing. Settings are left alone. */
 export async function clearRecords(env) {
   let keys = [];
   for (const prefix of RECORD_PREFIXES) {
     const found = await keysUnder(env, prefix);
-    // Said plainly rather than half done: a partial clear leaves a test
-    // starting from a state nobody can describe.
     if (found === null) return 'the counters could not be read, so nothing was cleared';
     keys.push(...found);
   }

@@ -1,7 +1,4 @@
-// The dashboard and ruchi-ai have to name the same memberships, features and
-// keys. They are separate repos kept in step by hand, and when they went out of
-// step the free tier's rows were still being offered for a plan the server had
-// stopped having.
+// Separate repos kept in step by hand, so the vocabularies are compared here.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -28,8 +25,6 @@ test('every combination the server can ask about has a row, and no row is spare'
   assert.deepEqual(MODELS.map((m) => `${m.feature}:${m.plan}`).sort(), wanted);
 });
 
-// The shipped defaults are the fallback when a key is missing, so a dashboard
-// showing a different number would be describing a state nothing is in.
 test('the numbers shown match what the server ships', () => {
   const shipped = {
     'smart_import:trial': [40, 'day'],
@@ -59,8 +54,6 @@ test('nothing retired is still on offer', () => {
   }
 });
 
-// Zero is how trials are switched off, and how the warning is silenced. Every
-// other allowance on the page refuses it, so this one is worth pinning.
 test('a trial of no hours at all is a real answer', async () => {
   const env = fakeEnv();
   assert.equal(await saveSetting(env, form({ trial: 'hours', max: '0' })), null);
@@ -81,8 +74,6 @@ test('a dial the page does not have cannot be written', async () => {
   assert.equal(env.sent.length, 0);
 });
 
-// Deleting rather than writing defaults: ruchi-ai then reads nothing and falls
-// back to its own shipped values, so one number lives in one place.
 test('a reset clears every key, live and retired, and stores nothing in their place', async () => {
   const env = fakeEnv();
   assert.equal(await saveSetting(env, form({ reset: '1' })), null);
@@ -110,11 +101,7 @@ function form(fields) {
   return { get: (key) => (data.has(key) ? data.get(key) : null) };
 }
 
-/**
- * `keys` answers a scan of each prefix in one page. `pages` answers every scan
- * with the same fixed sequence, for testing paging and a cursor that never
- * comes home.
- */
+/** `keys` answers each prefix scan in one page; `pages` replays a fixed sequence. */
 function fakeEnv({ reachable = true, keys = null, pages = null } = {}) {
   const env = {
     UPSTASH_URL: 'https://upstash.test',
@@ -180,8 +167,6 @@ test('what the scan finds is what gets removed, once each', async () => {
   assert.deepEqual(env.ran, RECORD_TABLES.map((t) => `DELETE FROM ${t}`));
 });
 
-// A scan comes back a page at a time, and stopping at the first page would
-// leave counters behind that nothing on the dashboard would show.
 test('a scan that pages is followed to the end', async () => {
   const env = fakeEnv({ pages: [['12', ['use:a']], ['0', ['use:b']]] });
   assert.equal(await saveSetting(env, form({ records: '1' })), null);
@@ -190,8 +175,6 @@ test('a scan that pages is followed to the end', async () => {
   assert.ok(removed.includes('use:a') && removed.includes('use:b'));
 });
 
-// A cursor that never returns to zero would otherwise spin until the worker is
-// killed, which reads to the person waiting as the page having hung.
 test('a scan that never finishes gives up rather than spinning', async () => {
   const env = fakeEnv({ pages: [['7', ['use:a']]] });
   const failure = await saveSetting(env, form({ records: '1' }));
@@ -199,8 +182,6 @@ test('a scan that never finishes gives up rather than spinning', async () => {
   assert.ok(env.sent.flat().filter(([verb]) => verb === 'SCAN').length < 2000);
 });
 
-// Half cleared is the worst outcome: a test then starts from a state nobody
-// can describe, and the numbers on the page cannot be trusted either.
 test('a store that cannot be read clears nothing and says so', async () => {
   const env = fakeEnv({ reachable: false });
   assert.match(await saveSetting(env, form({ records: '1' })), /nothing was cleared/);
