@@ -4,6 +4,14 @@
  * single call.
  */
 
+import { nickname } from './page.js';
+
+// A name is not stored, so finding one means naming every cook and comparing.
+// Bounded because that is a table scan; far more cooks than Ruchi has.
+const NAMEABLE = 5000;
+
+const HEX = /^[0-9a-f]+$/;
+
 const SORTS = {
   spend: 'micros DESC, calls DESC',
   imports: 'calls DESC, micros DESC',
@@ -148,19 +156,31 @@ export async function breakdown(env, days, column) {
  * alone: a cook who upgraded mid-window has spend on both sides of the paywall,
  * and collapsing that would hide the one number the tiers exist to answer.
  */
+async function hashesNamed(env, name, window) {
+  const { results } = await scoped(
+    env, 'user_hash AS name', `GROUP BY user_hash LIMIT ${NAMEABLE}`, window,
+  ).all();
+  return (results ?? []).map((r) => r.name).filter((h) => nickname(h) === name);
+}
+
 export async function cooks(env, { days, sort = 'spend', plan = 'all', search = '', page = 0, perPage = 50 }) {
   const window = bounds(days);
   const extra = [];
   const binds = [];
   if (plan === 'free' || plan === 'pro' || plan === 'trial') {
-    // A trial is recorded as a free plan on smart_import; nothing else is.
-    if (plan === 'trial') extra.push("plan = 'free' AND feature_id = 'smart_import'");
-    else if (plan === 'free') extra.push("(plan = 'free' AND feature_id != 'smart_import')");
-    else extra.push('plan = ?'), binds.push(plan);
+    extra.push('plan = ?');
+    binds.push(plan);
   }
   if (search) {
-    extra.push('user_hash LIKE ?');
-    binds.push(`${search}%`);
+    if (HEX.test(search)) {
+      extra.push('user_hash LIKE ?');
+      binds.push(`${search}%`);
+    } else {
+      const named = await hashesNamed(env, search, window);
+      if (!named.length) return { rows: [], more: false };
+      extra.push(`user_hash IN (${named.map(() => '?').join(', ')})`);
+      binds.push(...named);
+    }
   }
 
   // One row per person, with their memberships rolled up inside it. The page

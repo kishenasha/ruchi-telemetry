@@ -12,7 +12,7 @@ import {
 } from './page.js';
 import {
   BURST, MIN_ALLOWANCE, MIN_BURST, PERIODS, PERIOD_LABEL, PLAN_LABEL, PLAN_NOTE, SOURCES,
-  SOURCE_LABEL, SOURCE_OF, TRIAL_CLOCK, currentPlan, planOf, readBurst, readLimits,
+  SOURCE_LABEL, SOURCE_OF, TRIAL_CLOCK, currentPlan, readBurst, readLimits,
   readModels, readTrialClock,
 } from './settings.js';
 
@@ -21,8 +21,8 @@ const PER_PAGE = 50;
 // A usage row named the way a cook experienced it: which import, and which
 // membership they were on at the time.
 function usageCell(row) {
-  const plan = planOf(row.feature_id, row.plan);
   const source = SOURCE_OF[row.feature_id];
+  const plan = row.plan;
   return `${gradeTag(plan, PLAN_LABEL[plan] ?? plan)}
     <span class="dim src">${esc(SOURCE_LABEL[source] ?? row.feature_id)}</span>`;
 }
@@ -138,11 +138,10 @@ const SORTS = ['spend', 'imports', 'failed', 'recent'];
 export async function cooks(url, env) {
   const chosen = windowFrom(url);
   const sort = SORTS.includes(url.searchParams.get('s')) ? url.searchParams.get('s') : 'spend';
-  const plan = ['trial', 'free', 'pro'].includes(url.searchParams.get('plan'))
+  const plan = ['trial', 'pro'].includes(url.searchParams.get('plan'))
     ? url.searchParams.get('plan') : 'all';
-  // The search is a hash prefix, so anything that is not hex cannot match and
-  // is dropped rather than sent to the database.
-  const search = (url.searchParams.get('q') ?? '').toLowerCase().replace(/[^0-9a-f]/g, '').slice(0, 64);
+  // Either the name a cook reads out of the app, or the start of their hash.
+  const search = (url.searchParams.get('q') ?? '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
   const page = Math.max(0, Math.min(400, Number(url.searchParams.get('p')) || 0));
 
   const { rows, more } = await db.cooks(env, { days: chosen.days, sort, plan, search, page, perPage: PER_PAGE });
@@ -164,11 +163,10 @@ export async function cooks(url, env) {
     <form class="filters" method="get">
       <input type="hidden" name="w" value="${esc(chosen.key)}">
       <input type="hidden" name="s" value="${esc(sort)}">
-      <input type="search" name="q" value="${esc(search)}" placeholder="Start of a cook's code" spellcheck="false">
+      <input type="search" name="q" value="${esc(search)}" placeholder="A cook's name, or the start of their code" spellcheck="false">
       <select name="plan">
         <option value="all"${plan === 'all' ? ' selected' : ''}>Every membership</option>
         <option value="trial"${plan === 'trial' ? ' selected' : ''}>Trial only</option>
-        <option value="free"${plan === 'free' ? ' selected' : ''}>Free only</option>
         <option value="pro"${plan === 'pro' ? ' selected' : ''}>Pro only</option>
       </select>
       <button type="submit">Find</button>
@@ -213,7 +211,7 @@ function cookRows(cook, chosen) {
   const spent = (plan) => plan !== current && (plan === 'trial' || plan === 'pro');
 
   const history = tiers.map((tier) => {
-    const plan = planOf(tier.feature_id, tier.plan);
+    const plan = tier.plan;
     const source = SOURCE_OF[tier.feature_id];
     return `<tr class="sub">
       <td class="dim">${esc(SOURCE_LABEL[source] ?? tier.feature_id)}</td>

@@ -52,13 +52,6 @@ export const SOURCE_OF = {
 
 export const SOURCE_LABEL = Object.fromEntries(SOURCES.map((s) => [s.source, s.label]));
 
-/** The membership a usage row represents. Only records predating the trial need
- * this; the server records the plan directly now. */
-export function planOf(featureId, plan) {
-  if (plan === 'free' && featureId === 'smart_import') return 'trial';
-  return plan;
-}
-
 /**
  * Which membership a cook is on now, read off their most recent usage rather
  * than stored: a cook who upgraded has Pro rows newer than their trial ones.
@@ -70,15 +63,14 @@ export function planOf(featureId, plan) {
 export function currentPlan(cook) {
   // tiers arrive newest first, so the first membership named is the current one.
   const tier = (cook?.tiers ?? [])[0];
-  return tier ? planOf(tier.feature_id, tier.plan) : 'free';
+  return tier ? tier.plan : 'trial';
 }
 
 /** Every membership a cook has been on, newest first, each named once. */
 export function planHistory(cook) {
   const seen = [];
   for (const tier of cook?.tiers ?? []) {
-    const plan = planOf(tier.feature_id, tier.plan);
-    if (!seen.includes(plan)) seen.push(plan);
+    if (!seen.includes(tier.plan)) seen.push(tier.plan);
   }
   return seen;
 }

@@ -65,3 +65,49 @@ test('all time asks for no day bounds at all', async () => {
     assert.ok(!sql.includes('day >='), sql);
   }
 });
+
+// A cook reads the name out of the app and it is typed in here, so the search
+// has to accept one. A name is derived from the hash rather than stored, which
+// is why it cannot be a LIKE and has to be resolved first.
+test('a code is matched as a prefix of the hash', async () => {
+  const { env, seen } = recorder();
+  await cooks(env, { days: 30, search: 'a1b2c3' });
+  const query = seen.find((q) => q.sql.includes('user_hash LIKE'));
+  assert.ok(query, 'a hex search should still be a prefix match');
+  assert.ok(query.binds.includes('a1b2c3%'));
+});
+
+test('a name is resolved to the hashes that carry it', async () => {
+  const hash = 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
+  const seen = [];
+  const env = {
+    DB: {
+      prepare: (sql) => ({
+        bind: (...binds) => {
+          seen.push({ sql, binds });
+          return {
+            first: async () => null,
+            all: async () => ({
+              results: sql.includes('GROUP BY user_hash LIMIT')
+                ? [{ name: hash }, { name: 'f'.repeat(64) }]
+                : [],
+            }),
+          };
+        },
+      }),
+    },
+  };
+
+  await cooks(env, { days: 30, search: 'mellow-quail-70' });
+  const query = seen.find((q) => q.sql.includes('user_hash IN'));
+  assert.ok(query, 'a name should be turned into the hashes it belongs to');
+  assert.deepEqual(query.binds.slice(0, 1), [hash]);
+});
+
+test('a name nobody has asks the database for nothing further', async () => {
+  const { env, seen } = recorder();
+  const { rows, more } = await cooks(env, { days: 30, search: 'warm-wren-01' });
+  assert.deepEqual(rows, []);
+  assert.equal(more, false);
+  assert.equal(seen.filter((q) => q.sql.includes('user_hash IN')).length, 0);
+});
