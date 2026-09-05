@@ -13,6 +13,7 @@ export const SOURCES = [
   { source: 'url', label: 'Recipe URL' },
   { source: 'text', label: 'Pasted text' },
   { source: 'image', label: 'Photo' },
+  { source: 'pantry', label: 'Pantry list' },
 ];
 
 export const TIERS = [
@@ -22,6 +23,8 @@ export const TIERS = [
   { source: 'text', feature: 'text_import', plan: 'pro', max: 6000, period: 'month' },
   { source: 'image', feature: 'image_import', plan: 'trial', max: 15, period: 'day' },
   { source: 'image', feature: 'image_import', plan: 'pro', max: 6000, period: 'month' },
+  { source: 'pantry', feature: 'pantry_import', plan: 'trial', max: 60, period: 'day' },
+  { source: 'pantry', feature: 'pantry_import', plan: 'pro', max: 6000, period: 'month' },
 ];
 
 // Kept in step with server/lib/models.py's DEFAULT_MODELS by hand. A trial keeps
@@ -33,6 +36,8 @@ export const MODELS = [
   { source: 'text', feature: 'text_import', plan: 'pro', model: 'openai/gpt-5.6-luna' },
   { source: 'image', feature: 'image_import', plan: 'trial', model: 'openai/gpt-5.6-luna' },
   { source: 'image', feature: 'image_import', plan: 'pro', model: 'openai/gpt-5.6-luna' },
+  { source: 'pantry', feature: 'pantry_import', plan: 'trial', model: 'google/gemini-2.5-flash-lite' },
+  { source: 'pantry', feature: 'pantry_import', plan: 'pro', model: 'google/gemini-2.5-flash-lite' },
 ];
 
 // Free is kept only for reading back records from before the trial replaced it.
@@ -48,6 +53,7 @@ export const PLAN_NOTE = {
 // experiences it rather than the way the server names it.
 export const SOURCE_OF = {
   smart_import: 'url', quick_import: 'url', text_import: 'text', image_import: 'image',
+  pantry_import: 'pantry',
 };
 
 export const SOURCE_LABEL = Object.fromEntries(SOURCES.map((s) => [s.source, s.label]));

@@ -11,7 +11,7 @@ import {
 // server/lib/quota.py's PLANS.
 const PLANS = ['trial', 'pro'];
 // server/lib/quota.py's DEFAULT_LIMITS and models.py's DEFAULT_MODELS.
-const FEATURES = ['smart_import', 'text_import', 'image_import'];
+const FEATURES = ['smart_import', 'text_import', 'image_import', 'pantry_import'];
 
 test('the only memberships offered are the ones the server has', () => {
   for (const row of [...TIERS, ...MODELS]) {
@@ -31,9 +31,11 @@ test('the numbers shown match what the server ships', () => {
     'smart_import:trial': [40, 'day'],
     'text_import:trial': [20, 'day'],
     'image_import:trial': [15, 'day'],
+    'pantry_import:trial': [60, 'day'],
     'smart_import:pro': [6000, 'month'],
     'text_import:pro': [6000, 'month'],
     'image_import:pro': [6000, 'month'],
+    'pantry_import:pro': [6000, 'month'],
   };
   for (const t of TIERS) {
     assert.deepEqual([t.max, t.period], shipped[`${t.feature}:${t.plan}`], `${t.feature}:${t.plan}`);
