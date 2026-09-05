@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  MODELS, RECORD_PREFIXES, RECORD_TABLES, RETIRED, TIERS, TRIAL_CLOCK, saveSetting,
+  MODELS, RECORD_PREFIXES, RECORD_TABLES, RETIRED, TIERS, TRIAL_CLOCK,
+  adjustCooks, hasOverrides, readCooks, saveSetting,
 } from '../src/settings.js';
 
 // server/lib/quota.py's PLANS.
@@ -124,6 +125,16 @@ function fakeEnv({ reachable = true, keys = null, pages = null } = {}) {
     const prefix = String(scan[3]).replace(/\*$/, '');
     return { ok: true, json: async () => [{ result: ['0', keys?.[prefix] ?? []] }] };
   };
+  env.answer = (records) => {
+    globalThis.fetch = async (_url, options) => {
+      const commands = JSON.parse(options.body);
+      env.sent.push(commands);
+      return {
+        ok: reachable,
+        json: async () => commands.map(([, k]) => ({ result: records[k] ?? null })),
+      };
+    };
+  };
   env.DB = {
     prepare(sql) {
       const statement = {
@@ -197,4 +208,88 @@ test('forgetting the records leaves the settings alone', async () => {
   assert.equal(touched.some((k) => String(k).startsWith('model:')), false);
   assert.equal(touched.includes('trial:hours'), false);
   assert.equal(env.ran.includes('DELETE FROM limits'), false);
+});
+
+// -- one cook's own settings ------------------------------------------------
+
+const HASH = 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
+const OTHER = 'f'.repeat(64);
+
+const adjustment = (fields) => form({ ...fields });
+
+test('an allowance left empty falls back to the membership rather than being set', async () => {
+  const env = fakeEnv();
+  assert.equal(await adjustCooks(env, [HASH], adjustment({
+    max_smart_import: '', period_smart_import: 'day', max_text_import: '4', period_text_import: 'day',
+  })), null);
+
+  const written = JSON.parse(env.sent.at(-1)[0][2]);
+  assert.deepEqual(written.limits, { text_import: '4:day' });
+});
+
+// Zero is how one cook is stopped from importing without being turned away
+// outright, so it has to survive being written.
+test('an allowance of zero is a real answer', async () => {
+  const env = fakeEnv();
+  await adjustCooks(env, [HASH], adjustment({ max_image_import: '0', period_image_import: 'month' }));
+  assert.deepEqual(JSON.parse(env.sent.at(-1)[0][2]).limits, { image_import: '0:month' });
+});
+
+test('the same adjustment is written for every cook chosen', async () => {
+  const env = fakeEnv();
+  await adjustCooks(env, [HASH, OTHER, HASH], adjustment({ blocked: 'on' }));
+
+  const commands = env.sent.at(-1);
+  assert.deepEqual(commands.map(([verb, key]) => [verb, key]), [
+    ['SET', `cook:${HASH}`], ['SET', `cook:${OTHER}`],
+  ]);
+  assert.equal(JSON.parse(commands[0][2]).blocked, true);
+});
+
+test('a number or a model that is not one is refused before anything is written', async () => {
+  for (const bad of [
+    { max_smart_import: '-1', period_smart_import: 'day' },
+    { max_smart_import: '2.5', period_smart_import: 'day' },
+    { max_smart_import: '5', period_smart_import: 'fortnight' },
+    { model_smart_import: 'not a model' },
+  ]) {
+    const env = fakeEnv();
+    assert.notEqual(await adjustCooks(env, [HASH], adjustment(bad)), null, JSON.stringify(bad));
+    assert.equal(env.sent.length, 0);
+  }
+});
+
+test('clearing removes the record rather than writing an empty one', async () => {
+  const env = fakeEnv();
+  assert.equal(await adjustCooks(env, [HASH], adjustment({ clear: '1' })), null);
+  assert.deepEqual(env.sent.at(-1), [['DEL', `cook:${HASH}`]]);
+});
+
+test('starting a trial again forgets only when it began', async () => {
+  const env = fakeEnv();
+  assert.equal(await adjustCooks(env, [HASH], adjustment({ reset: '1' })), null);
+  assert.deepEqual(env.sent.at(-1), [['DEL', `trial:start:${HASH}`]]);
+});
+
+test('nobody chosen is refused rather than written to everyone', async () => {
+  const env = fakeEnv();
+  assert.match(await adjustCooks(env, [], adjustment({ blocked: 'on' })), /nobody/);
+  assert.equal(env.sent.length, 0);
+});
+
+test('a record is read back per cook, and junk is nobody having set anything', async () => {
+  const env = fakeEnv();
+  env.answer({ [`cook:${HASH}`]: '{"blocked":true}', [`cook:${OTHER}`]: 'not json' });
+  const found = await readCooks(env, [HASH, OTHER]);
+  assert.equal(found.get(HASH).blocked, true);
+  assert.equal(found.has(OTHER), false);
+});
+
+// A cook is marked as adjusted on the list, so an empty record left behind must
+// not read as one, or the mark would mean nothing.
+test('an empty record is not an adjustment', () => {
+  assert.equal(hasOverrides(undefined), false);
+  assert.equal(hasOverrides({ limits: {}, models: {} }), false);
+  assert.equal(hasOverrides({ limits: { smart_import: '1:day' } }), true);
+  assert.equal(hasOverrides({ blocked: true }), true);
 });

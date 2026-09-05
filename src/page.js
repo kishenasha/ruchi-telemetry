@@ -3,7 +3,7 @@
  * page uses. Nothing here reads the database.
  */
 
-const HEX64 = /^[0-9a-f]{64}$/;
+export const HEX64 = /^[0-9a-f]{64}$/;
 const MICROS_PER_USD = 1_000_000;
 
 // A person who somehow reached an AI call without a verified identity still
@@ -385,6 +385,11 @@ const STYLE = `
   button:hover { opacity: .9; }
   .pad { padding: 12px 17px 16px; }
   .action + .action { margin-top: 16px; }
+  td.tick, th.tick { width: 34px; padding-right: 0; }
+  .picked { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+  .picked .lede { margin: 0; }
+  .chosen { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 14px; }
+  .tag--set { background: var(--wash); color: var(--muted); margin-left: 7px; }
   .action .lede { max-width: 62ch; }
   form.set { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
   form.set input[type=number] { width: 7em; text-align: right; }

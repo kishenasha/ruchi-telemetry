@@ -385,6 +385,105 @@ export async function clearRecords(env) {
 
 /** Every setting shares this endpoint: validate, push to Upstash, record
  * whether it landed. Returns a failure string, or null when saved. */
+/**
+ * What has been set for one cook in particular, which beats their membership's.
+ *
+ * Upstash only, with no D1 copy. The global settings keep one so the page can
+ * say whether a push landed; here the store is the only reader and the only
+ * writer, so a second copy would only be a second thing to disagree with.
+ *
+ * Kept in step with server/lib/overrides.py by hand.
+ */
+export const cookKey = (hash) => `cook:${hash}`;
+
+export async function readCooks(env, hashes) {
+  const wanted = [...new Set(hashes)].filter(Boolean);
+  const found = new Map();
+  if (!wanted.length) return found;
+  const body = await ask(env, wanted.map((h) => ['GET', cookKey(h)]));
+  wanted.forEach((hash, i) => {
+    const raw = body?.[i]?.result;
+    if (typeof raw !== 'string') return;
+    try {
+      const record = JSON.parse(raw);
+      if (record && typeof record === 'object') found.set(hash, record);
+    } catch { /* a record nobody can read is one nobody set */ }
+  });
+  return found;
+}
+
+/** Whether a record actually says anything, so a cook is not marked as adjusted
+ * because an empty one was once written for them. */
+export function hasOverrides(record) {
+  if (!record) return false;
+  return record.blocked === true
+    || Object.keys(record.limits ?? {}).length > 0
+    || Object.keys(record.models ?? {}).length > 0;
+}
+
+function cookRecordFrom(form) {
+  const record = { limits: {}, models: {} };
+  if (form.get('blocked') !== null) record.blocked = true;
+
+  for (const tier of TIERS) {
+    const max = String(form.get(`max_${tier.feature}`) ?? '').trim();
+    const period = String(form.get(`period_${tier.feature}`) ?? '');
+    // Left empty means "whatever the membership says", which is the only way
+    // back to normal for one feature without clearing the lot.
+    if (!max) continue;
+    const number = Number(max);
+    if (!Number.isInteger(number) || number < 0 || number > 1_000_000) {
+      return { failure: 'an allowance has to be a whole number, 0 or more' };
+    }
+    if (!PERIODS.includes(period)) return { failure: 'that is not a period' };
+    record.limits[tier.feature] = `${number}:${period}`;
+  }
+
+  for (const tier of MODELS) {
+    const model = String(form.get(`model_${tier.feature}`) ?? '').trim();
+    if (!model) continue;
+    if (!MODEL_ID.test(model)) return { failure: 'not a model id' };
+    record.models[tier.feature] = model;
+  }
+  return { record };
+}
+
+/** Every chosen cook gets the same record. Setting one person's limit and
+ * another's separately is two visits, which is the right shape: the reason to
+ * pick several at once is to do the same thing to them. */
+export async function saveCooks(env, hashes, form) {
+  const { record, failure } = cookRecordFrom(form);
+  if (failure) return failure;
+  const wanted = [...new Set(hashes)].filter(Boolean);
+  if (!wanted.length) return 'nobody was chosen';
+
+  const value = JSON.stringify(record);
+  const ok = await send(env, wanted.map((h) => ['SET', cookKey(h), value]));
+  return ok ? null : 'the settings store could not be reached';
+}
+
+export async function clearCooks(env, hashes) {
+  const wanted = [...new Set(hashes)].filter(Boolean);
+  if (!wanted.length) return 'nobody was chosen';
+  const ok = await send(env, wanted.map((h) => ['DEL', cookKey(h)]));
+  return ok ? null : 'the settings store could not be reached';
+}
+
+/** Forget when their trial began, so the next Pro feature they reach for starts
+ * a whole new one. */
+export async function resetTrials(env, hashes) {
+  const wanted = [...new Set(hashes)].filter(Boolean);
+  if (!wanted.length) return 'nobody was chosen';
+  const ok = await send(env, wanted.map((h) => ['DEL', `trial:start:${h}`]));
+  return ok ? null : 'the settings store could not be reached';
+}
+
+export async function adjustCooks(env, hashes, form) {
+  if (form.get('clear') !== null) return clearCooks(env, hashes);
+  if (form.get('reset') !== null) return resetTrials(env, hashes);
+  return saveCooks(env, hashes, form);
+}
+
 export async function saveSetting(env, form) {
   if (form.get('records') !== null) return clearRecords(env);
   if (form.get('reset') !== null) return resetSettings(env);

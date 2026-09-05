@@ -11,7 +11,7 @@
  */
 
 import { NO_IDENTITY } from './page.js';
-import { saveSetting } from './settings.js';
+import { adjustCooks, saveSetting } from './settings.js';
 import * as views from './views.js';
 
 const SLUG = /^[a-z0-9_]{1,64}$/;
@@ -63,6 +63,19 @@ export default {
         return html(await views.oneCook(url, env, id));
       }
       return html(await views.cooks(url, env));
+    }
+
+    if (url.pathname === '/cooks/adjust') {
+      if (request.method !== 'POST') return html(await views.adjust(url, env));
+
+      const origin = request.headers.get('origin');
+      if (origin && origin !== url.origin) return json({ error: 'origin' }, 403);
+
+      const form = await request.formData();
+      const ids = form.getAll('id').filter((h) => HEX64.test(h));
+      const failure = await adjustCooks(env, ids, form);
+      if (failure) return html(await views.adjust(url, env, failure), 400);
+      return new Response(null, { status: 303, headers: { Location: '/cooks', ...NO_STORE } });
     }
 
     if (url.pathname === '/ingredients') return html(await views.ingredients(env));

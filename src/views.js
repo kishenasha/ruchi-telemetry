@@ -7,13 +7,13 @@
 
 import * as db from './queries.js';
 import {
-  chart, count, empty, esc, failures, gradeTag, money, nickname, panel,
+  chart, count, empty, esc, failures, gradeTag, HEX64, money, nickname, panel,
   pricedNote, rangeLabel, shell, stat, state, when, windowFrom, windowPicker,
 } from './page.js';
 import {
   BURST, MIN_ALLOWANCE, MIN_BURST, PERIODS, PERIOD_LABEL, PLAN_LABEL, PLAN_NOTE, SOURCES,
-  SOURCE_LABEL, SOURCE_OF, TRIAL_CLOCK, currentPlan, readBurst, readLimits,
-  readModels, readTrialClock,
+  SOURCE_LABEL, SOURCE_OF, TIERS, TRIAL_CLOCK, currentPlan, hasOverrides, readBurst,
+  readCooks, readLimits, readModels, readTrialClock,
 } from './settings.js';
 
 const PER_PAGE = 50;
@@ -145,6 +145,7 @@ export async function cooks(url, env) {
   const page = Math.max(0, Math.min(400, Number(url.searchParams.get('p')) || 0));
 
   const { rows, more } = await db.cooks(env, { days: chosen.days, sort, plan, search, page, perPage: PER_PAGE });
+  const adjusted = await readCooks(env, rows.map((r) => r.name));
 
   const link = (params) => {
     const next = new URL(url);
@@ -176,18 +177,24 @@ export async function cooks(url, env) {
   const body = `
 ${head('Cooks', 'One row each. Open one to see every membership they have been on.', chosen, windowPicker(url, chosen))}
 ${filters}
+<form method="get" action="/cooks/adjust" id="pick"></form>
 ${panel('', '', `<table>
   <thead><tr>
+    <th class="tick"></th>
     <th>Cook</th><th>Now on</th>
     <th class="num">${sorter('imports', 'Imports')}</th>
     <th class="num">${sorter('spend', 'Spend')}</th>
     <th class="num">${sorter('failed', 'Failed')}</th>
     <th class="when">${sorter('recent', 'Last one')}</th>
   </tr></thead>
-  ${rows.length ? rows.map((r) => cookRows(r, chosen)).join('') : `<tbody>${empty(
-    search ? 'No cook starts with that code.' : 'No cooks have imported yet.', 6,
+  ${rows.length ? rows.map((r) => cookRows(r, chosen, hasOverrides(adjusted.get(r.name)))).join('') : `<tbody>${empty(
+    search ? 'Nobody by that name or code.' : 'No cooks have imported yet.', 7,
   )}</tbody>`}
 </table>`)}
+${rows.length ? `<div class="picked">
+  <button type="submit" form="pick">Adjust usage</button>
+  <span class="lede">Tick anyone above. What you set for them beats Settings.</span>
+</div>` : ''}
 <div class="pager">
   <a class="${page === 0 ? 'off' : ''}" href="${link({ p: Math.max(0, page - 1) })}">Back</a>
   <span>${rows.length ? `${count(page * PER_PAGE + 1)} to ${count(page * PER_PAGE + rows.length)}` : ''}</span>
@@ -205,7 +212,7 @@ ${panel('', '', `<table>
  * Which membership is current is read off the most recent row rather than
  * stored: a cook who upgraded has Pro rows newer than their trial ones.
  */
-function cookRows(cook, chosen) {
+function cookRows(cook, chosen, adjusted = false) {
   const tiers = cook.tiers ?? [];
   const current = currentPlan(cook);
   const spent = (plan) => plan !== current && (plan === 'trial' || plan === 'pro');
@@ -214,6 +221,7 @@ function cookRows(cook, chosen) {
     const plan = tier.plan;
     const source = SOURCE_OF[tier.feature_id];
     return `<tr class="sub">
+      <td class="tick"></td>
       <td class="dim">${esc(SOURCE_LABEL[source] ?? tier.feature_id)}</td>
       <td><span class="${spent(plan) ? 'spent' : ''}">${gradeTag(plan, PLAN_LABEL[plan] ?? plan)}</span></td>
       <td class="num">${count(tier.calls)}</td>
@@ -225,7 +233,14 @@ function cookRows(cook, chosen) {
 
   return `<tbody class="cook">
     <tr>
-      <td><a class="who" href="/cooks?id=${esc(cook.name)}&amp;w=${esc(chosen.key)}">${esc(nickname(cook.name))}</a></td>
+      <td class="tick">
+        <input type="checkbox" name="id" value="${esc(cook.name)}" form="pick"
+               aria-label="Choose ${esc(nickname(cook.name))}">
+      </td>
+      <td>
+        <a class="who" href="/cooks?id=${esc(cook.name)}&amp;w=${esc(chosen.key)}">${esc(nickname(cook.name))}</a>
+        ${adjusted ? '<span class="tag tag--set">adjusted</span>' : ''}
+      </td>
       <td>${gradeTag(current, PLAN_LABEL[current] ?? current)}</td>
       <td class="num">${count(cook.calls)}</td>
       <td class="num">${money(cook.micros)}${pricedNote(cook)}</td>
@@ -338,6 +353,83 @@ ${panel('', 'Not required to review a name above. A bonus when it exists, never 
 }
 
 // -- settings ---------------------------------------------------------------
+
+/**
+ * What has been set for the cooks you picked, rather than for a membership.
+ *
+ * The same tables as Settings, so the two cannot describe different worlds. An
+ * allowance left empty means whatever the membership says, which is the only
+ * way back to normal for one feature without clearing the lot.
+ */
+export async function adjust(url, env, failure = null) {
+  const hashes = url.searchParams.getAll('id').filter((h) => HEX64.test(h));
+  const records = await readCooks(env, hashes);
+  // Several cooks can only be edited together when they already agree; where
+  // they differ the field starts empty rather than quietly flattening them.
+  const shared = (read) => {
+    const values = hashes.map((h) => read(records.get(h) ?? {}) ?? '');
+    return values.every((v) => v === values[0]) ? values[0] : '';
+  };
+  const blocked = hashes.length > 0 && hashes.every((h) => records.get(h)?.blocked === true);
+
+  const who = hashes.map((h) => `<span class="tag">${esc(nickname(h))}</span>`).join(' ');
+  const keep = hashes.map((h) => `<input type="hidden" name="id" value="${esc(h)}">`).join('');
+
+  const allowanceRows = TIERS.filter((t) => t.plan === 'trial').map((t) => {
+    const current = shared((r) => (r.limits ?? {})[t.feature]);
+    const [max = '', period = t.period] = current ? current.split(':') : [];
+    return `<tr>
+      <td><strong>${esc(SOURCE_LABEL[t.source])}</strong></td>
+      <td>
+        <input type="number" name="max_${esc(t.feature)}" value="${esc(max)}" min="0" max="1000000">
+        <select name="period_${esc(t.feature)}">
+          ${PERIODS.map((p) => `<option value="${p}"${p === period ? ' selected' : ''}>${PERIOD_LABEL[p]}</option>`).join('')}
+        </select>
+      </td>
+      <td>
+        <input type="text" name="model_${esc(t.feature)}" class="wide"
+               value="${esc(shared((r) => (r.models ?? {})[t.feature]))}"
+               placeholder="whatever Settings says">
+      </td>
+    </tr>`;
+  }).join('');
+
+  const body = `
+${head('Adjust usage', `${hashes.length} ${hashes.length === 1 ? 'cook' : 'cooks'}. Anything set here beats Settings for them alone.`)}
+${failure ? `<p class="warn">That change was refused: ${esc(failure)}.</p>` : ''}
+${hashes.length ? `
+<p class="chosen">${who}</p>
+
+<form method="post" action="/cooks/adjust">
+${keep}
+${panel('Their allowances and model', 'Leave a number empty and that import falls back to what Settings says. Zero stops it without blocking them.', `<table class="stack">
+  <thead><tr><th>Import</th><th>Allowance</th><th>Model</th></tr></thead>
+  <tbody>${allowanceRows}</tbody>
+</table>`)}
+
+${panel('Blocked', 'Refused before a model is chosen, so an abusive cook costs nothing to turn away. Everything else in Ruchi keeps working for them.', `<div class="pad">
+  <label class="onoff">
+    <input type="checkbox" name="blocked"${blocked ? ' checked' : ''}>
+    <span>Refuse every import from ${hashes.length === 1 ? 'this cook' : 'these cooks'}</span>
+  </label>
+</div>`)}
+
+<div class="picked">
+  <button type="submit">Save</button>
+  <button type="submit" name="reset" value="1"
+          onclick="return confirm('Forget when their trial began, so the next import starts a new one?')">
+    Start their trial again
+  </button>
+  <button type="submit" name="clear" value="1"
+          onclick="return confirm('Put them back on whatever Settings says?')">
+    Clear what is set
+  </button>
+</div>
+</form>` : '<p class="lede">Nobody was chosen. Tick a cook or two on the Cooks page first.</p>'}
+<p class="pager"><span></span><a href="/cooks">Back to cooks</a></p>
+`;
+  return shell('/cooks', body);
+}
 
 export async function settings(env, failure = null) {
   const [limits, models, burst, clock] = await Promise.all([
