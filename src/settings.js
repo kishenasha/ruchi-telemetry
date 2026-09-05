@@ -341,7 +341,7 @@ export const RECORD_PREFIXES = [
 ];
 
 export const RECORD_TABLES = [
-  'usage_daily', 'errors_daily', 'ingredient_unresolved_daily', 'ingredient_correction_daily',
+  'usage_daily', 'errors_daily', 'ingredient_unresolved_daily',
 ];
 
 // A cursor that never returns to zero would otherwise spin forever.

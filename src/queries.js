@@ -255,13 +255,3 @@ export async function unresolvedIngredients(env, limit = 100, min = MIN_SIGHTING
   return results ?? [];
 }
 
-export async function ingredientCorrections(env, limit = 100) {
-  const { results } = await env.DB.prepare(`
-    SELECT ingredient, corrected_to, SUM(count) AS total, MAX(last_seen) AS seen
-    FROM ingredient_correction_daily
-    GROUP BY ingredient, corrected_to
-    ORDER BY total DESC, seen DESC
-    LIMIT ?
-  `).bind(limit).all();
-  return results ?? [];
-}

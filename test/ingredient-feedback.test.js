@@ -1,4 +1,4 @@
-// The one place a cook's own typing reaches this service. Both lists are
+// The one place a cook's own typing reaches this service. The list is
 // bounded, deduplicated and lowercased here, not trusted from the client:
 // this is the actual privacy boundary for plan/14 section 14.4, and the app
 // sending well-formed data is not a substitute for it being checked again.
@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { validCorrections, validNames } from '../src/index.js';
+import { validNames } from '../src/index.js';
 
 test('names are trimmed, lowercased and deduplicated', () => {
   assert.deepEqual(validNames([' Elaichi ', 'elaichi', 'Toor Dal']), ['elaichi', 'toor dal']);
@@ -20,21 +20,4 @@ test('anything that is not a short real string is dropped', () => {
 test('the list is capped rather than growing without bound', () => {
   const many = Array.from({ length: 50 }, (_, i) => `ingredient-${i}`);
   assert.equal(validNames(many).length, 20);
-});
-
-test('a correction needs both a real from and a real to', () => {
-  assert.deepEqual(validCorrections([{ from: 'elaichi', to: 'Cardamom' }]), [
-    { from: 'elaichi', to: 'Cardamom' },
-  ]);
-  assert.deepEqual(validCorrections([{ from: 'elaichi', to: '' }]), []);
-  assert.deepEqual(validCorrections([{ from: '', to: 'Cardamom' }]), []);
-  assert.deepEqual(validCorrections([null, 'a string', { from: 42, to: 'x' }]), []);
-});
-
-test('the same from/to pair does not appear twice', () => {
-  const result = validCorrections([
-    { from: 'elaichi', to: 'Cardamom' },
-    { from: 'Elaichi', to: 'Cardamom' },
-  ]);
-  assert.equal(result.length, 1);
 });

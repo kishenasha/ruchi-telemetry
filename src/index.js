@@ -152,8 +152,8 @@ async function ingest(request, env) {
 
 // Every ruchi-ai forwards after its own bounds and rate limiting; this is
 // the second check, not the only one. Deliberately holds no identity of any
-// kind, matching plan/14 section 14.4: an occurrence needs no correction to
-// be worth reviewing, and neither table can ever be traced to who sent it.
+// kind, matching plan/14 section 14.4: a name is worth reviewing on its own,
+// and the table can never be traced to who sent it.
 async function ingredientFeedback(request, env) {
   if (!env.INGEST_SECRET) return json({ error: 'not configured' }, 503);
   const offered = (request.headers.get('authorization') || '').replace(/^Bearer /, '');
@@ -173,8 +173,7 @@ async function ingredientFeedback(request, env) {
   if (!FEEDBACK_SOURCE.test(source || '')) return json({ error: 'bad body' }, 400);
 
   const unresolved = validNames(body.unresolved);
-  const corrections = validCorrections(body.corrections);
-  if (!unresolved.length && !corrections.length) return json({ ok: true, stored: 0 });
+  if (!unresolved.length) return json({ ok: true, stored: 0 });
 
   const now = new Date().toISOString();
   const day = now.slice(0, 10);
@@ -189,17 +188,7 @@ async function ingredientFeedback(request, env) {
     `).bind(day, ingredient, corpusVersion, source, now, now).run();
   }
 
-  for (const { from, to } of corrections) {
-    await env.DB.prepare(`
-      INSERT INTO ingredient_correction_daily
-        (day, ingredient, corrected_to, corpus_version, count, first_seen, last_seen)
-      VALUES (?, ?, ?, ?, 1, ?, ?)
-      ON CONFLICT (day, ingredient, corrected_to, corpus_version) DO UPDATE SET
-        count = count + 1, last_seen = excluded.last_seen
-    `).bind(day, from, to, corpusVersion, now, now).run();
-  }
-
-  return json({ ok: true, stored: unresolved.length + corrections.length });
+  return json({ ok: true, stored: unresolved.length });
 }
 
 // A normalized, deduplicated list of names, capped and filtered rather than
@@ -216,20 +205,6 @@ export function validNames(raw) {
     if (seen.size >= MAX_FEEDBACK_ITEMS) break;
   }
   return [...seen];
-}
-
-export function validCorrections(raw) {
-  if (!Array.isArray(raw)) return [];
-  const seen = new Map();
-  for (const item of raw) {
-    if (!item || typeof item !== 'object') continue;
-    const from = typeof item.from === 'string' ? item.from.trim().toLowerCase() : '';
-    const to = typeof item.to === 'string' ? item.to.trim() : '';
-    if (!from || !to || !INGREDIENT_NAME.test(from) || !INGREDIENT_NAME.test(to)) continue;
-    seen.set(`${from} ${to}`, { from, to });
-    if (seen.size >= MAX_FEEDBACK_ITEMS) break;
-  }
-  return [...seen.values()];
 }
 
 /**
