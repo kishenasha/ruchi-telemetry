@@ -12,7 +12,8 @@ import {
 } from './page.js';
 import {
   BURST, MIN_ALLOWANCE, MIN_BURST, PERIODS, PERIOD_LABEL, PLAN_LABEL, PLAN_NOTE, SOURCES,
-  SOURCE_LABEL, SOURCE_OF, currentPlan, planOf, readBurst, readLimits, readModels,
+  SOURCE_LABEL, SOURCE_OF, TRIAL_CLOCK, currentPlan, planOf, readBurst, readLimits,
+  readModels, readTrialClock,
 } from './settings.js';
 
 const PER_PAGE = 50;
@@ -341,8 +342,8 @@ ${panel('', 'Not required to review a name above. A bonus when it exists, never 
 // -- settings ---------------------------------------------------------------
 
 export async function settings(env, failure = null) {
-  const [limits, models, burst] = await Promise.all([
-    readLimits(env), readModels(env), readBurst(env),
+  const [limits, models, burst, clock] = await Promise.all([
+    readLimits(env), readModels(env), readBurst(env), readTrialClock(env),
   ]);
 
   // Grouped by source: a cook picks where a recipe comes from, and only then
@@ -393,7 +394,23 @@ export async function settings(env, failure = null) {
 ${head('Settings', 'Changes reach the servers within seconds. No app release, no redeploy.')}
 ${failure ? `<p class="warn">That change was refused: ${esc(failure)}.</p>` : ''}
 
-${panel('Which model each import runs on', "Pro trial has no row of its own: it runs Pro's model, which is what makes it a taste of it.", `<table>
+${panel('How long the trial lasts', 'Only the start of a trial is stored, so raising this lengthens the trials already running, not just the ones that begin afterwards. Zero hours switches trials off; zero warning says nothing before one ends.', `<table>
+  <thead><tr><th>What</th><th></th><th>Hours</th></tr></thead>
+  <tbody>${clock.map((d) => `<tr>
+    <td><strong>${esc(d.label)}</strong></td>
+    <td></td>
+    <td>
+      <form method="post" class="set">
+        <input type="hidden" name="trial" value="${esc(d.plan)}">
+        <input type="number" name="max" value="${d.max}" min="0" max="${d.max_allowed}" required>
+        <button type="submit">Save</button>
+        ${state(d)}
+      </form>
+    </td>
+  </tr>`).join('')}</tbody>
+</table>`)}
+
+${panel('Which model each import runs on', "A trial runs Pro's model, which is what makes it a taste of Pro rather than a description of one. It has a row of its own so the two can be moved apart.", `<table>
   <thead><tr><th>Import</th><th>Membership</th><th>Model</th></tr></thead>
   <tbody>${modelRows}</tbody>
 </table>`)}
@@ -418,6 +435,11 @@ ${panel('How many imports in a row', "A brake on one cook hammering the button, 
     </td>
   </tr></tbody>
 </table>`)}
+
+${panel('Start again', 'Puts every setting on this page back to what the app ships with, and clears what the free tier left behind. Nothing is written in its place: the servers fall back to their own shipped values, so one number lives in one place.', `<form method="post" class="set" onsubmit="return confirm('Put every setting back to what the app ships with?')">
+  <input type="hidden" name="reset" value="1">
+  <button type="submit">Reset every setting</button>
+</form>`)}
 `;
   return shell('/settings', body);
 }

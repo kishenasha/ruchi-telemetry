@@ -8,11 +8,9 @@
 
 // Kept in step with lib/quota.py's DEFAULT_LIMITS by hand.
 //
-// Three memberships, one axis: a trial is a free cook spending their taste of
-// Pro, so it runs Pro's model and saves without the editor. A recipe URL is
-// the one source with two grades behind it (smart_import is the good model,
-// quick_import the cheap one); pasted text and a photograph have one grade
-// each and split on plan alone.
+// Two memberships, one axis. There is no free plan: an install gets Pro for a
+// while and is then asked to pay, so every source has a trial row and a pro row
+// and nothing else. quick_import and free_import went with the free tier.
 export const SOURCES = [
   { source: 'url', label: 'Recipe URL' },
   { source: 'text', label: 'Pasted text' },
@@ -20,35 +18,34 @@ export const SOURCES = [
 ];
 
 export const TIERS = [
-  { source: 'url', feature: 'smart_import', plan: 'trial', max: 5, period: 'life' },
-  { source: 'url', feature: 'quick_import', plan: 'free', max: 10, period: 'month' },
+  { source: 'url', feature: 'smart_import', plan: 'trial', max: 40, period: 'day' },
   { source: 'url', feature: 'smart_import', plan: 'pro', max: 6000, period: 'month' },
-  { source: 'text', feature: 'text_import', plan: 'trial', max: 5, period: 'life' },
-  { source: 'text', feature: 'text_import', plan: 'free', max: 5, period: 'month' },
+  { source: 'text', feature: 'text_import', plan: 'trial', max: 20, period: 'day' },
   { source: 'text', feature: 'text_import', plan: 'pro', max: 6000, period: 'month' },
-  { source: 'image', feature: 'image_import', plan: 'trial', max: 3, period: 'life' },
-  { source: 'image', feature: 'image_import', plan: 'free', max: 3, period: 'month' },
+  { source: 'image', feature: 'image_import', plan: 'trial', max: 15, period: 'day' },
   { source: 'image', feature: 'image_import', plan: 'pro', max: 6000, period: 'month' },
 ];
 
-// Kept in step with server/lib/models.py's DEFAULT_MODELS by hand. Two rows
-// per source, not three: a trial reads Pro's row, which is what makes it a
-// taste of Pro rather than a description of one.
+// Kept in step with server/lib/models.py's DEFAULT_MODELS by hand. A trial has
+// a row of its own even though it ships on the same model: a taste of something
+// lesser demonstrates nothing, but the two should be movable apart.
 export const MODELS = [
-  { source: 'url', feature: 'quick_import', plan: 'free', model: 'google/gemini-2.5-flash-lite' },
+  { source: 'url', feature: 'smart_import', plan: 'trial', model: 'openai/gpt-5.6-luna' },
   { source: 'url', feature: 'smart_import', plan: 'pro', model: 'openai/gpt-5.6-luna' },
-  { source: 'text', feature: 'text_import', plan: 'free', model: 'google/gemini-2.5-flash-lite' },
+  { source: 'text', feature: 'text_import', plan: 'trial', model: 'openai/gpt-5.6-luna' },
   { source: 'text', feature: 'text_import', plan: 'pro', model: 'openai/gpt-5.6-luna' },
-  { source: 'image', feature: 'image_import', plan: 'free', model: 'google/gemini-2.5-flash-lite' },
+  { source: 'image', feature: 'image_import', plan: 'trial', model: 'openai/gpt-5.6-luna' },
   { source: 'image', feature: 'image_import', plan: 'pro', model: 'openai/gpt-5.6-luna' },
 ];
 
-// The one vocabulary for a membership, used everywhere a plan is shown.
+// The one vocabulary for a membership, used everywhere a plan is shown. Free is
+// kept for reading back records from before the trial replaced it, and is not a
+// membership anything can be set for any more.
 export const PLAN_LABEL = { trial: 'Pro trial', free: 'Free', pro: 'Pro' };
 
 export const PLAN_NOTE = {
-  trial: 'A free cook spending their taste of Pro: the good model, saving without the editor',
-  free: 'The cheap model, with the cook confirming before it saves',
+  trial: 'Pro for a while: the same model, saving without the editor, nothing locked',
+  free: 'Retired, kept for reading back what happened before the trial replaced it',
   pro: 'What Pro buys, and a ceiling no real cook reaches',
 };
 
@@ -60,8 +57,9 @@ export const SOURCE_OF = {
 
 export const SOURCE_LABEL = Object.fromEntries(SOURCES.map((s) => [s.source, s.label]));
 
-/** The membership a usage row represents. Only a URL import needs the feature
- * to tell trial from free; everything else is the plan as recorded. */
+/** The membership a usage row represents. Only records from before the trial
+ * replaced the free tier need this, when a free cook's first few URL imports
+ * were the trial; the server records the plan directly now. */
 export function planOf(featureId, plan) {
   if (plan === 'free' && featureId === 'smart_import') return 'trial';
   return plan;
@@ -125,6 +123,58 @@ export const BURST = {
   feature: 'burst', plan: 'all', key: 'limit:burst', max: 5, windowLabel: 'in 10 minutes',
 };
 
+/**
+ * How long a trial runs, and how long before it ends Ruchi says so.
+ *
+ * Only the start of a trial is stored, so raising the hours lengthens the
+ * trials already running rather than only the ones that begin afterwards. That
+ * is the point of setting it here: nobody has measured what a trial costs yet.
+ *
+ * Zero hours is a real answer and means trials are switched off. Zero warning
+ * means nothing is said before one ends.
+ *
+ * Kept in the limits table under reserved feature ids, the same trick BURST
+ * uses, rather than earning a table for two numbers.
+ */
+export const TRIAL_CLOCK = [
+  {
+    feature: 'trial', plan: 'hours', key: 'trial:hours', max: 24, max_allowed: 8760,
+    label: 'How long a trial runs', unit: 'hours',
+  },
+  {
+    feature: 'trial', plan: 'warn_hours', key: 'trial:warn_hours', max: 6, max_allowed: 8760,
+    label: 'Warn this long before it ends', unit: 'hours',
+  },
+];
+
+export async function readTrialClock(env) {
+  const { results } = await env.DB.prepare(
+    'SELECT * FROM limits WHERE feature_id = ?',
+  ).bind('trial').all();
+  const saved = new Map((results ?? []).map((r) => [r.plan, r]));
+  return TRIAL_CLOCK.map((dial) => {
+    const row = saved.get(dial.plan);
+    return row
+      ? { ...dial, max: row.max_calls, applied: row.applied === 1, updatedAt: row.updated_at, custom: true }
+      : { ...dial, applied: true, updatedAt: null, custom: false };
+  });
+}
+
+// Everything the old three-membership world wrote and nothing reads now. Left
+// in Upstash they are worse than clutter: a stale limit:smart_import:trial from
+// the days of five-for-life would quietly override the shipped allowance, and
+// nothing on this page would show it.
+export const RETIRED = {
+  keys: [
+    'limit:quick_import:free', 'limit:smart_import:free', 'limit:text_import:free',
+    'limit:image_import:free', 'limit:free_import:free',
+    'model:quick_import:free', 'model:smart_import:free', 'model:text_import:free',
+    'model:image_import:free', 'model:free_import:free',
+  ],
+  features: ['quick_import', 'free_import'],
+  plans: ['free'],
+};
+
 // ruchi-ai floors whatever it reads, since the brake fails closed and a zero
 // would refuse every import for everyone. The form refuses it first, so the
 // number shown is always the number enforced.
@@ -162,8 +212,8 @@ export async function readLimits(env) {
   });
 }
 
-async function push(env, key, value) {
-  if (!env.UPSTASH_URL || !env.UPSTASH_TOKEN) return false;
+async function send(env, commands) {
+  if (!env.UPSTASH_URL || !env.UPSTASH_TOKEN || !commands.length) return false;
   try {
     const response = await fetch(`${env.UPSTASH_URL}/pipeline`, {
       method: 'POST',
@@ -171,13 +221,15 @@ async function push(env, key, value) {
         Authorization: `Bearer ${env.UPSTASH_TOKEN}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify([['SET', key, value]]),
+      body: JSON.stringify(commands),
     });
     return response.ok;
   } catch {
     return false;
   }
 }
+
+const push = (env, key, value) => send(env, [['SET', key, value]]);
 
 async function saveModel(env, form) {
   const feature = String(form.get('feature') ?? '');
@@ -247,9 +299,50 @@ async function saveBurst(env, form) {
   return null;
 }
 
+async function saveTrialClock(env, form) {
+  const plan = String(form.get('trial') ?? '');
+  const dial = TRIAL_CLOCK.find((d) => d.plan === plan);
+  const max = Number(form.get('max'));
+  // Zero is allowed here and nowhere else: no trial at all, and no warning
+  // before one ends, are both answers somebody might want.
+  if (!dial || !Number.isInteger(max) || max < 0 || max > dial.max_allowed) {
+    return `that has to be a whole number of hours, 0 to ${dial ? dial.max_allowed : 8760}`;
+  }
+
+  const applied = await push(env, dial.key, String(max));
+  await env.DB.prepare(`
+    INSERT INTO limits (feature_id, plan, max_calls, period, applied, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT (feature_id, plan) DO UPDATE SET
+      max_calls = excluded.max_calls,
+      applied = excluded.applied,
+      updated_at = excluded.updated_at
+  `).bind(dial.feature, dial.plan, max, 'hours', applied ? 1 : 0, new Date().toISOString()).run();
+  return null;
+}
+
+/**
+ * Put every setting back to what ships, and clear what the free tier left
+ * behind. Deleting rather than writing defaults, so ruchi-ai reads nothing and
+ * falls back to its own shipped values: two places holding the same number is
+ * how they drift.
+ */
+export async function resetSettings(env) {
+  const live = [...TIERS.map((t) => `limit:${t.feature}:${t.plan}`),
+    ...MODELS.map((m) => `model:${m.feature}:${m.plan}`),
+    ...TRIAL_CLOCK.map((d) => d.key), BURST.key];
+  const cleared = await send(env, [...new Set([...live, ...RETIRED.keys])].map((k) => ['DEL', k]));
+
+  await env.DB.prepare('DELETE FROM limits').run();
+  await env.DB.prepare('DELETE FROM models').run();
+  return cleared ? null : 'the settings store could not be reached, so the servers may still hold the old values';
+}
+
 /** Every setting shares this endpoint: validate, push to Upstash, record
  * whether it landed. Returns a failure string, or null when saved. */
 export async function saveSetting(env, form) {
+  if (form.get('reset') !== null) return resetSettings(env);
   if (form.get('model') !== null) return saveModel(env, form);
+  if (form.get('trial') !== null) return saveTrialClock(env, form);
   return form.get('burst') !== null ? saveBurst(env, form) : saveLimit(env, form);
 }
