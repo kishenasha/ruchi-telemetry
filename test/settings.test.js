@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  MODELS, RETIRED, TIERS, TRIAL_CLOCK, saveSetting,
+  MODELS, RECORD_PREFIXES, RECORD_TABLES, RETIRED, TIERS, TRIAL_CLOCK, saveSetting,
 } from '../src/settings.js';
 
 // server/lib/quota.py's PLANS.
@@ -110,16 +110,32 @@ function form(fields) {
   return { get: (key) => (data.has(key) ? data.get(key) : null) };
 }
 
-function fakeEnv({ reachable = true } = {}) {
+/**
+ * `keys` answers a scan of each prefix in one page. `pages` answers every scan
+ * with the same fixed sequence, for testing paging and a cursor that never
+ * comes home.
+ */
+function fakeEnv({ reachable = true, keys = null, pages = null } = {}) {
   const env = {
     UPSTASH_URL: 'https://upstash.test',
     UPSTASH_TOKEN: 'token',
     sent: [],
     ran: [],
   };
+  let page = 0;
   globalThis.fetch = async (_url, options) => {
-    env.sent.push(JSON.parse(options.body));
-    return { ok: reachable };
+    const commands = JSON.parse(options.body);
+    env.sent.push(commands);
+    if (!reachable) return { ok: false };
+    const scan = commands[0][0] === 'SCAN' ? commands[0] : null;
+    if (!scan) return { ok: true };
+    if (pages) {
+      const answer = pages[Math.min(page, pages.length - 1)];
+      page += 1;
+      return { ok: true, json: async () => [{ result: answer }] };
+    }
+    const prefix = String(scan[3]).replace(/\*$/, '');
+    return { ok: true, json: async () => [{ result: ['0', keys?.[prefix] ?? []] }] };
   };
   env.DB = {
     prepare(sql) {
@@ -134,3 +150,70 @@ function fakeEnv({ reachable = true } = {}) {
   };
   return env;
 }
+
+// -- forgetting the records -------------------------------------------------
+
+test('every counter the servers keep is scanned for, trial starts included', async () => {
+  const env = fakeEnv({ keys: {} });
+  assert.equal(await saveSetting(env, form({ records: '1' })), null);
+
+  const scanned = env.sent.flat().filter(([verb]) => verb === 'SCAN').map((c) => c[3]);
+  assert.deepEqual(scanned, RECORD_PREFIXES.map((p) => `${p}*`));
+  assert.ok(RECORD_PREFIXES.includes('trial:start:'), 'a spent trial has to be forgettable');
+});
+
+test('what the scan finds is what gets removed, once each', async () => {
+  const env = fakeEnv({
+    keys: {
+      'use:': ['use:smart_import:trial:2026-09-05:abc'],
+      'ai:req:': ['ai:req:user:abc:2026-09-05'],
+      'trial:start:': ['trial:start:dev1', 'trial:start:dev2'],
+    },
+  });
+  assert.equal(await saveSetting(env, form({ records: '1' })), null);
+
+  const removed = env.sent.flat().filter(([verb]) => verb === 'DEL').map(([, key]) => key);
+  assert.deepEqual(removed.sort(), [
+    'ai:req:user:abc:2026-09-05', 'trial:start:dev1', 'trial:start:dev2',
+    'use:smart_import:trial:2026-09-05:abc',
+  ]);
+  assert.deepEqual(env.ran, RECORD_TABLES.map((t) => `DELETE FROM ${t}`));
+});
+
+// A scan comes back a page at a time, and stopping at the first page would
+// leave counters behind that nothing on the dashboard would show.
+test('a scan that pages is followed to the end', async () => {
+  const env = fakeEnv({ pages: [['12', ['use:a']], ['0', ['use:b']]] });
+  assert.equal(await saveSetting(env, form({ records: '1' })), null);
+
+  const removed = env.sent.flat().filter(([verb]) => verb === 'DEL').map(([, key]) => key);
+  assert.ok(removed.includes('use:a') && removed.includes('use:b'));
+});
+
+// A cursor that never returns to zero would otherwise spin until the worker is
+// killed, which reads to the person waiting as the page having hung.
+test('a scan that never finishes gives up rather than spinning', async () => {
+  const env = fakeEnv({ pages: [['7', ['use:a']]] });
+  const failure = await saveSetting(env, form({ records: '1' }));
+  assert.equal(failure, null);
+  assert.ok(env.sent.flat().filter(([verb]) => verb === 'SCAN').length < 2000);
+});
+
+// Half cleared is the worst outcome: a test then starts from a state nobody
+// can describe, and the numbers on the page cannot be trusted either.
+test('a store that cannot be read clears nothing and says so', async () => {
+  const env = fakeEnv({ reachable: false });
+  assert.match(await saveSetting(env, form({ records: '1' })), /nothing was cleared/);
+  assert.deepEqual(env.ran, []);
+});
+
+test('forgetting the records leaves the settings alone', async () => {
+  const env = fakeEnv({ keys: { 'use:': ['use:x'] } });
+  await saveSetting(env, form({ records: '1' }));
+
+  const touched = env.sent.flat().map(([, key]) => key);
+  assert.equal(touched.some((k) => String(k).startsWith('limit:')), false);
+  assert.equal(touched.some((k) => String(k).startsWith('model:')), false);
+  assert.equal(touched.includes('trial:hours'), false);
+  assert.equal(env.ran.includes('DELETE FROM limits'), false);
+});

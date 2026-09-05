@@ -231,6 +231,24 @@ async function send(env, commands) {
 
 const push = (env, key, value) => send(env, [['SET', key, value]]);
 
+/** Like send, but hands back what the store answered. */
+async function ask(env, commands) {
+  if (!env.UPSTASH_URL || !env.UPSTASH_TOKEN || !commands.length) return null;
+  try {
+    const response = await fetch(`${env.UPSTASH_URL}/pipeline`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.UPSTASH_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(commands),
+    });
+    return response.ok ? await response.json() : null;
+  } catch {
+    return null;
+  }
+}
+
 async function saveModel(env, form) {
   const feature = String(form.get('feature') ?? '');
   const plan = String(form.get('plan') ?? '');
@@ -338,9 +356,83 @@ export async function resetSettings(env) {
   return cleared ? null : 'the settings store could not be reached, so the servers may still hold the old values';
 }
 
+/**
+ * Everything the servers remember about who did what. Not settings: these are
+ * records, and starting a test from nothing means starting without them.
+ *
+ * trial:start is the one that matters most. A trial is keyed to the phone
+ * rather than the install, precisely so a reinstall cannot refill it, which
+ * also means a spent trial follows a device around until this lets it go.
+ */
+export const RECORD_PREFIXES = [
+  // What each person has used, per feature and membership.
+  'use:',
+  // Calls and spend per day, what the charts are drawn from.
+  'ai:req:', 'ai:spend:',
+  // The brake on somebody hammering the import button.
+  'ratelimit:',
+  // When each phone's taste of Pro began.
+  'trial:start:',
+];
+
+export const RECORD_TABLES = [
+  'usage_daily', 'errors_daily', 'ingredient_unresolved_daily', 'ingredient_correction_daily',
+];
+
+// Upstash pages a scan, and a cursor that never came back to zero would spin
+// forever. Far more rounds than this project will ever need.
+const SCAN_ROUNDS = 200;
+const REMOVE_BATCH = 200;
+
+async function keysUnder(env, prefix) {
+  const found = [];
+  let cursor = '0';
+  for (let round = 0; round < SCAN_ROUNDS; round += 1) {
+    const body = await ask(env, [['SCAN', cursor, 'MATCH', `${prefix}*`, 'COUNT', '1000']]);
+    const page = body?.[0]?.result;
+    if (!Array.isArray(page)) return null;
+    const [next, keys] = page;
+    if (Array.isArray(keys)) found.push(...keys);
+    cursor = String(next);
+    if (cursor === '0') return found;
+  }
+  return found;
+}
+
+/**
+ * Put the records back to nothing, so the next import is the first one that
+ * ever happened. Settings are left alone: this is for testing the product
+ * rather than reconfiguring it, and taking both at once is a worse surprise
+ * than taking either.
+ */
+export async function clearRecords(env) {
+  let keys = [];
+  for (const prefix of RECORD_PREFIXES) {
+    const found = await keysUnder(env, prefix);
+    // Said plainly rather than half done: a partial clear leaves a test
+    // starting from a state nobody can describe.
+    if (found === null) return 'the counters could not be read, so nothing was cleared';
+    keys.push(...found);
+  }
+  keys = [...new Set(keys)];
+
+  for (let i = 0; i < keys.length; i += REMOVE_BATCH) {
+    const batch = keys.slice(i, i + REMOVE_BATCH);
+    if (!await send(env, batch.map((k) => ['DEL', k]))) {
+      return 'the counters were only partly cleared, so run it again';
+    }
+  }
+
+  for (const table of RECORD_TABLES) {
+    await env.DB.prepare(`DELETE FROM ${table}`).run();
+  }
+  return null;
+}
+
 /** Every setting shares this endpoint: validate, push to Upstash, record
  * whether it landed. Returns a failure string, or null when saved. */
 export async function saveSetting(env, form) {
+  if (form.get('records') !== null) return clearRecords(env);
   if (form.get('reset') !== null) return resetSettings(env);
   if (form.get('model') !== null) return saveModel(env, form);
   if (form.get('trial') !== null) return saveTrialClock(env, form);

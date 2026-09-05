@@ -436,9 +436,15 @@ ${panel('How many imports in a row', "A brake on one cook hammering the button, 
   </tr></tbody>
 </table>`)}
 
-${panel('Start again', 'Puts every setting on this page back to what the app ships with, and clears what the free tier left behind. Nothing is written in its place: the servers fall back to their own shipped values, so one number lives in one place.', `<form method="post" class="set" onsubmit="return confirm('Put every setting back to what the app ships with?')">
+${panel('Start again', 'Two different things, kept apart on purpose. The first is about how Ruchi is set up; the second is about what has happened so far. Neither touches the other.', `<form method="post" class="set" onsubmit="return confirm('Put every setting back to what the app ships with?')">
   <input type="hidden" name="reset" value="1">
   <button type="submit">Reset every setting</button>
+  <span class="lede">Back to what the app ships with, and clears what the free tier left behind. Nothing is written in its place, so the servers fall back to their own values.</span>
+</form>
+<form method="post" class="set" onsubmit="return confirm('Forget every cook, import and trial recorded so far?')">
+  <input type="hidden" name="records" value="1">
+  <button type="submit">Forget every record</button>
+  <span class="lede">Every cook, import, error and spend on these pages, the allowances counted against them, and every phone's trial. The next import becomes the first one that ever happened. For testing from nothing.</span>
 </form>`)}
 `;
   return shell('/settings', body);
