@@ -394,7 +394,7 @@ export async function settings(env, failure = null) {
 ${head('Settings', 'Changes reach the servers within seconds. No app release, no redeploy.')}
 ${failure ? `<p class="warn">That change was refused: ${esc(failure)}.</p>` : ''}
 
-${panel('How long the trial lasts', 'Only the start of a trial is stored, so raising this lengthens the trials already running, not just the ones that begin afterwards. Zero hours switches trials off; zero warning says nothing before one ends.', `<table>
+${panel('How long the trial lasts', 'Only the start of a trial is stored, so raising this lengthens the trials already running, not just the ones that begin afterwards. Zero hours switches trials off; zero warning says nothing before one ends.', `<table class="stack">
   <thead><tr><th>What</th><th></th><th>Hours</th></tr></thead>
   <tbody>${clock.map((d) => `<tr>
     <td><strong>${esc(d.label)}</strong></td>
@@ -410,17 +410,17 @@ ${panel('How long the trial lasts', 'Only the start of a trial is stored, so rai
   </tr>`).join('')}</tbody>
 </table>`)}
 
-${panel('Which model each import runs on', "A trial runs Pro's model, which is what makes it a taste of Pro rather than a description of one. It has a row of its own so the two can be moved apart.", `<table>
+${panel('Which model each import runs on', "A trial runs Pro's model, which is what makes it a taste of Pro rather than a description of one. It has a row of its own so the two can be moved apart.", `<table class="stack">
   <thead><tr><th>Import</th><th>Membership</th><th>Model</th></tr></thead>
   <tbody>${modelRows}</tbody>
 </table>`)}
 
-${panel('How many imports each membership gets', 'Per membership, never per person. Switch one off and nobody on that membership gets that import at all; the number is kept, so it comes back as it was.', `<table>
+${panel('How many imports each membership gets', 'Per membership, never per person. Switch one off and nobody on that membership gets that import at all; the number is kept, so it comes back as it was.', `<table class="stack">
   <thead><tr><th>Import</th><th>Membership</th><th>Allowance</th></tr></thead>
   <tbody>${limitRows}</tbody>
 </table>`)}
 
-${panel('How many imports in a row', "A brake on one cook hammering the button, not a membership allowance: everybody gets the same number, whichever import they are running. This is the one setting that refuses when it cannot be checked, so it will not go below " + MIN_BURST + '.', `<table>
+${panel('How many imports in a row', "A brake on one cook hammering the button, not a membership allowance: everybody gets the same number, whichever import they are running. This is the one setting that refuses when it cannot be checked, so it will not go below " + MIN_BURST + '.', `<table class="stack">
   <thead><tr><th>What</th><th>Window</th><th>Allowance</th></tr></thead>
   <tbody><tr>
     <td><strong>Any import</strong></td>

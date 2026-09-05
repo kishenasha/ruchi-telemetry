@@ -405,8 +405,44 @@ const STYLE = `
   @media (max-width: 720px) {
     .split { grid-template-columns: 1fr; }
     .split .panel + .panel { margin-top: 12px; }
-    th, td { padding: 9px 12px; }
+    th, td { padding: 9px 10px; }
     .when, th.when { display: none; }
-    .top-in { gap: 14px; }
+
+    /* With the date column gone these fit a phone, and spend is the whole
+       point of the page: it must not be the thing off the right edge. */
+    table { min-width: 0; }
+    /* Two things on one line is what pushed a column off the edge. Each of
+       these is a footnote to the number above it, so it can sit under it. */
+    .src { display: block; margin-left: 0; }
+    td.num .note { display: block; }
+
+    /* Four tabs and a brand do not fit a phone on one line, and the page you
+       are on was the one falling off the end. Its own row, scrolling if even
+       that is not enough. */
+    .top-in { gap: 10px 14px; height: auto; padding: 9px 0 7px; flex-wrap: wrap; }
+    .tabs { order: 3; width: 100%; overflow-x: auto; scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tabs a { white-space: nowrap; padding: 5px 10px; }
+
+    .wrap { padding: 0 14px; }
+    main { padding: 20px 6px 8px; }
+    .panel-head { padding: 13px 14px 2px; }
+    .pad { padding: 12px 14px 16px; }
+
+    /* A settings row is a form, and a form you have to scroll sideways to
+       reach is a form you cannot use. Every other table here is something to
+       read, so those still scroll; these stack. */
+    table.stack, table.stack tbody, table.stack tr, table.stack td {
+      display: block; min-width: 0; width: auto;
+    }
+    table.stack thead { display: none; }
+    table.stack tr { padding: 12px 14px; border-top: 1px solid var(--line); }
+    table.stack tr.group { border-top-width: 1px; }
+    table.stack td { border: 0; padding: 0; }
+    table.stack td:empty { display: none; }
+    table.stack td + td { margin-top: 7px; }
+    table.stack form.set { margin-top: 3px; }
+    table.stack form.set input.wide { width: 100%; }
+    table.stack .grade-note { display: block; }
   }
 `;
