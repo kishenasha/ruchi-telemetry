@@ -383,6 +383,10 @@ const STYLE = `
   }
   button { cursor: pointer; background: var(--green); color: var(--panel); border-color: var(--green); font-weight: 600; padding: 6px 14px; }
   button:hover { opacity: .9; }
+  /* A panel whose body is not a table has no cell padding to borrow. */
+  .pad { padding: 12px 17px 16px; }
+  .action + .action { margin-top: 16px; }
+  .action .lede { max-width: 62ch; }
   form.set { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
   form.set input[type=number] { width: 7em; text-align: right; }
   form.set input.wide { width: 22em; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12.5px; }
