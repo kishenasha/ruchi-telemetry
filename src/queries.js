@@ -236,6 +236,11 @@ export async function cook(env, hash, days) {
 // Both lifetime, never windowed: this is a maintenance queue, not a daily
 // metric. A name worth reviewing is worth reviewing regardless of whether it
 // happened this week or three months ago.
+//
+// Everything a cook types is reported, so most of what arrives is a typo or a
+// brand nobody else will ever write. A name is only worth reading once several
+// kitchens have used it.
+export const MIN_SIGHTINGS = 3;
 
 export async function unresolvedIngredients(env, limit = 100) {
   const { results } = await env.DB.prepare(`
@@ -243,9 +248,10 @@ export async function unresolvedIngredients(env, limit = 100) {
            GROUP_CONCAT(DISTINCT corpus_version) AS versions, MAX(last_seen) AS seen
     FROM ingredient_unresolved_daily
     GROUP BY ingredient
+    HAVING total >= ?
     ORDER BY total DESC, seen DESC
     LIMIT ?
-  `).bind(limit).all();
+  `).bind(MIN_SIGHTINGS, limit).all();
   return results ?? [];
 }
 
