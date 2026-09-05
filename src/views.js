@@ -167,7 +167,7 @@ export async function cooks(url, env) {
       <input type="search" name="q" value="${esc(search)}" placeholder="Start of a cook's code" spellcheck="false">
       <select name="plan">
         <option value="all"${plan === 'all' ? ' selected' : ''}>Every membership</option>
-        <option value="trial"${plan === 'trial' ? ' selected' : ''}>Pro trial only</option>
+        <option value="trial"${plan === 'trial' ? ' selected' : ''}>Trial only</option>
         <option value="free"${plan === 'free' ? ' selected' : ''}>Free only</option>
         <option value="pro"${plan === 'pro' ? ' selected' : ''}>Pro only</option>
       </select>

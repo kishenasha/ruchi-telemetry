@@ -41,7 +41,7 @@ export const MODELS = [
 // The one vocabulary for a membership, used everywhere a plan is shown. Free is
 // kept for reading back records from before the trial replaced it, and is not a
 // membership anything can be set for any more.
-export const PLAN_LABEL = { trial: 'Pro trial', free: 'Free', pro: 'Pro' };
+export const PLAN_LABEL = { trial: 'Trial', free: 'Free', pro: 'Pro' };
 
 export const PLAN_NOTE = {
   trial: 'Pro for a while: the same model, saving without the editor, nothing locked',
