@@ -242,7 +242,7 @@ export async function cook(env, hash, days) {
 // kitchens have used it.
 export const MIN_SIGHTINGS = 3;
 
-export async function unresolvedIngredients(env, limit = 100) {
+export async function unresolvedIngredients(env, limit = 100, min = MIN_SIGHTINGS) {
   const { results } = await env.DB.prepare(`
     SELECT ingredient, SUM(count) AS total, MAX(corpus_version) AS latest_version,
            GROUP_CONCAT(DISTINCT corpus_version) AS versions, MAX(last_seen) AS seen
@@ -251,7 +251,7 @@ export async function unresolvedIngredients(env, limit = 100) {
     HAVING total >= ?
     ORDER BY total DESC, seen DESC
     LIMIT ?
-  `).bind(MIN_SIGHTINGS, limit).all();
+  `).bind(min, limit).all();
   return results ?? [];
 }
 

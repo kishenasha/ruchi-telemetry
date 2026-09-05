@@ -311,9 +311,12 @@ ${panel('', '', `<table>
 
 // -- ingredients --------------------------------------------------------
 
-export async function ingredients(env) {
+export async function ingredients(url, env) {
+  // Not stored: the tab opens on the shipped threshold every time, and a lower
+  // one is a deliberate look at the noise rather than a setting to forget.
+  const min = Math.max(1, Math.min(1000, Number(url.searchParams.get('min')) || db.MIN_SIGHTINGS));
   const [unresolved, corrections] = await Promise.all([
-    db.unresolvedIngredients(env),
+    db.unresolvedIngredients(env, 100, min),
     db.ingredientCorrections(env),
   ]);
 
@@ -323,6 +326,14 @@ export async function ingredients(env) {
 ${head('Ingredients', 'What the dictionary could not place. Lifetime, not windowed: a name earns review by count, not by date.')}
 
 <h2>Unresolved, by how often</h2>
+<form class="filters" method="get">
+  <label>Seen at least
+    <input type="number" name="min" value="${esc(min)}" min="1" max="1000">
+    times
+  </label>
+  <button type="submit">Show</button>
+  ${min === db.MIN_SIGHTINGS ? '' : `<a class="back" href="/ingredients">Back to ${db.MIN_SIGHTINGS}</a>`}
+</form>
 ${panel('', '', `<table>
   <thead><tr><th>Name</th><th class="num">Times</th><th>Corpus versions</th><th class="when">Last seen</th></tr></thead>
   <tbody>${unresolved.length
@@ -332,7 +343,7 @@ ${panel('', '', `<table>
         <td class="dim">${esc(r.versions)}</td>
         <td class="when">${when(r.seen)}</td>
       </tr>`).join('')
-    : empty('Nothing unresolved yet.', 4)}</tbody>
+    : empty(`Nothing seen ${min} times or more. Anything below that is still counting.`, 4)}</tbody>
 </table>`)}
 
 <h2>Corrections, a free answer when a cook gives one</h2>

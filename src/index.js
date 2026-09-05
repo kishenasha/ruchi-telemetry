@@ -78,7 +78,7 @@ export default {
       return new Response(null, { status: 303, headers: { Location: '/cooks', ...NO_STORE } });
     }
 
-    if (url.pathname === '/ingredients') return html(await views.ingredients(env));
+    if (url.pathname === '/ingredients') return html(await views.ingredients(url, env));
 
     if (url.pathname === '/settings') {
       if (request.method !== 'POST') return html(await views.settings(env));
