@@ -40,9 +40,9 @@ test('the numbers shown match what the server ships', () => {
   }
 });
 
-test('the trial dials write the keys the server reads', () => {
-  assert.deepEqual(TRIAL_CLOCK.map((d) => d.key), ['trial:hours', 'trial:warn_hours']);
-  assert.deepEqual(TRIAL_CLOCK.map((d) => d.max), [24, 6]);
+test('the trial dial writes the key the server reads', () => {
+  assert.deepEqual(TRIAL_CLOCK.map((d) => d.key), ['trial:hours']);
+  assert.deepEqual(TRIAL_CLOCK.map((d) => d.max), [24]);
 });
 
 test('nothing retired is still on offer', () => {

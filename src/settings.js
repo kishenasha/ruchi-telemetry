@@ -110,19 +110,14 @@ export const BURST = {
 };
 
 /**
- * How long a trial runs, and how long before it ends Ruchi says so. Zero is a
- * real answer for both: no trial at all, and no warning.
+ * How long a trial runs. Zero is a real answer: trials are switched off.
  *
- * Kept in the limits table under reserved feature ids, as BURST is.
+ * Kept in the limits table under a reserved feature id, as BURST is.
  */
 export const TRIAL_CLOCK = [
   {
     feature: 'trial', plan: 'hours', key: 'trial:hours', max: 24, max_allowed: 8760,
     label: 'How long a trial runs', unit: 'hours',
-  },
-  {
-    feature: 'trial', plan: 'warn_hours', key: 'trial:warn_hours', max: 6, max_allowed: 8760,
-    label: 'Warn this long before it ends', unit: 'hours',
   },
 ];
 
@@ -147,6 +142,8 @@ export const RETIRED = {
     'limit:image_import:free', 'limit:free_import:free',
     'model:quick_import:free', 'model:smart_import:free', 'model:text_import:free',
     'model:image_import:free', 'model:free_import:free',
+    // Ruchi no longer warns before a trial ends, so nothing reads this.
+    'trial:warn_hours',
   ],
   features: ['quick_import', 'free_import'],
   plans: ['free'],

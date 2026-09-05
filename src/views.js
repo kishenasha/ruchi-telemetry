@@ -484,7 +484,7 @@ export async function settings(env, failure = null) {
 ${head('Settings', 'Changes reach the servers within seconds. No app release, no redeploy.')}
 ${failure ? `<p class="warn">That change was refused: ${esc(failure)}.</p>` : ''}
 
-${panel('How long the trial lasts', 'Only the start of a trial is stored, so raising this lengthens the trials already running, not just the ones that begin afterwards. Zero hours switches trials off; zero warning says nothing before one ends.', `<table class="stack">
+${panel('How long the trial lasts', 'Only the start of a trial is stored, so raising this lengthens the trials already running, not just the ones that begin afterwards. Zero switches trials off.', `<table class="stack">
   <thead><tr><th>What</th><th></th><th>Hours</th></tr></thead>
   <tbody>${clock.map((d) => `<tr>
     <td><strong>${esc(d.label)}</strong></td>
